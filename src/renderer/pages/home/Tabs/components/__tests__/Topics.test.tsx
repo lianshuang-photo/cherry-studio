@@ -334,6 +334,7 @@ vi.mock('react-i18next', () => ({
         if (key === 'chat.topics.display.title') return 'Display mode'
         if (key === 'chat.topics.display.time') return 'Time'
         if (key === 'chat.topics.display.assistant') return 'Assistant'
+        if (key === 'chat.topics.draft') return 'Draft'
         if (key === 'chat.topics.group.today') return 'Today'
         if (key === 'chat.topics.group.yesterday') return 'Yesterday'
         if (key === 'chat.topics.group.this_week') return 'This week'
@@ -430,6 +431,7 @@ vi.mock('react-i18next', () => ({
 import { cacheService } from '@data/CacheService'
 import { dataApiService } from '@data/DataApiService'
 import type { ResourceListRevealRequest } from '@renderer/components/chat/resourceList/base'
+import { getChatDraftCacheKey, writeChatDraftCache } from '@renderer/components/composer/variants/chat/chatDraftCache'
 import type * as TopicDataApiModule from '@renderer/hooks/useTopic'
 import type { Topic } from '@renderer/types/topic'
 import {
@@ -701,6 +703,23 @@ const topicStreamStatusCacheKey = (topicId: string) => `topic.stream.statuses.${
 const topicStreamLastSeenCompletionCacheKey = (topicId: string) =>
   `topic.stream.last_seen_completion.${topicId}` as never
 
+function setTopicDraft(topicId: string, text: string) {
+  writeChatDraftCache(topicId, {
+    text,
+    tokens: [],
+    files: [],
+    knowledgeBaseIds: [],
+    mentionedModelIds: [],
+    modelMultiSelectMode: false
+  })
+}
+
+function clearTopicDraftCache(...topicIds: string[]) {
+  for (const topicId of topicIds) {
+    cacheService.delete(getChatDraftCacheKey(topicId))
+  }
+}
+
 function setTopicStreamCacheStatus(
   topicId: string,
   status: 'aborted' | 'awaiting-approval' | 'done' | 'error' | 'pending' | 'streaming',
@@ -738,6 +757,7 @@ describe('Topics', () => {
     topicStreamStatusMocks.statuses.clear()
     topicRowRenderMocks.counts.clear()
     clearTopicStreamCache('topic-a', 'topic-b', 'topic-c', 'topic-d', 'topic-e')
+    clearTopicDraftCache('topic-a', 'topic-b', 'topic-c', 'topic-d', 'topic-e')
     vi.useFakeTimers({ shouldAdvanceTime: true })
     vi.setSystemTime(new Date(2026, 0, 3, 12))
     MockUsePreferenceUtils.resetMocks()
@@ -2038,6 +2058,42 @@ describe('Topics', () => {
     expect(topicRow.querySelector('[aria-label="Pin Conversation"]')).toBeInTheDocument()
   })
 
+  it('shows and clears the draft indicator as draft content changes', () => {
+    renderTopicList()
+
+    let topicRow = getTopicRow('Gamma topic')
+    expect(within(topicRow).queryByRole('img', { name: 'Draft' })).not.toBeInTheDocument()
+
+    act(() => setTopicDraft('topic-c', 'First draft'))
+
+    topicRow = getTopicRow('Gamma topic')
+    expect(within(topicRow).getByRole('img', { name: 'Draft' })).toBeInTheDocument()
+
+    act(() => setTopicDraft('topic-c', 'Updated draft'))
+
+    expect(within(topicRow).getByRole('img', { name: 'Draft' })).toBeInTheDocument()
+
+    act(() => setTopicDraft('topic-c', ''))
+
+    expect(within(topicRow).queryByRole('img', { name: 'Draft' })).not.toBeInTheDocument()
+  })
+
+  it('shows the draft only after a higher-priority topic status clears', () => {
+    setTopicDraft('topic-c', 'Draft while running')
+    setTopicStreamCacheStatus('topic-c', 'pending')
+    renderTopicList()
+
+    let topicRow = getTopicRow('Gamma topic')
+    expect(within(topicRow).getByRole('img', { name: 'Running' })).toBeInTheDocument()
+    expect(within(topicRow).queryByRole('img', { name: 'Draft' })).not.toBeInTheDocument()
+
+    act(() => clearTopicStreamCache('topic-c'))
+
+    topicRow = getTopicRow('Gamma topic')
+    expect(within(topicRow).queryByRole('img', { name: 'Running' })).not.toBeInTheDocument()
+    expect(within(topicRow).getByRole('img', { name: 'Draft' })).toBeInTheDocument()
+  })
+
   it('keeps running and error indicators on the active topic but suppresses its completion dot', () => {
     const activeTopic = createRendererTopic({ id: 'topic-a', assistantId: 'assistant-1', name: 'Alpha topic' })
 
@@ -2064,6 +2120,7 @@ describe('Topics', () => {
   })
 
   it('shows an awaiting-approval badge for a terminal topic without a spinner', () => {
+    setTopicDraft('topic-c', 'Draft while awaiting approval')
     setTopicStreamCacheStatus('topic-c', 'awaiting-approval')
     renderTopicList()
 
@@ -2072,6 +2129,7 @@ describe('Topics', () => {
 
     expect(badge).toHaveTextContent('Pending')
     expect(topicRow.querySelector('[data-testid="topic-stream-indicator"]')).not.toBeInTheDocument()
+    expect(within(topicRow).queryByRole('img', { name: 'Draft' })).not.toBeInTheDocument()
   })
 
   it('shows only the awaiting-approval badge when a live topic pauses for approval', () => {

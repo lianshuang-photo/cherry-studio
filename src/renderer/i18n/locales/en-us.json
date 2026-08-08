@@ -1919,6 +1919,7 @@
         "time": "Time",
         "title": "Display mode"
       },
+      "draft": "Draft",
       "edit": {
         "placeholder": "Enter new name",
         "title": "Edit conversation name",
