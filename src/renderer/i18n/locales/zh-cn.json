@@ -976,6 +976,10 @@
       "executing": "正在执行...",
       "expired": "已过期",
       "inputPreview": "工具输入预览",
+      "pdfSplit": {
+        "preparing": "正在准备 PDF 拆分计划…",
+        "retry": "重新检查"
+      },
       "pending": "等待确认",
       "pendingBadge": "待确认",
       "permissionExpired": "权限请求已过期。等待新指令...",
@@ -3143,6 +3147,14 @@
         "end_reached": "没有更多了",
         "loading_more": "加载更多…"
       },
+      "pdf_split": {
+        "confirm": "拆分并上传",
+        "description": "这些 PDF 超出 {{processor}} 的稳定处理范围。Cherry Studio 将保留原文件，并把每个分片作为独立知识项上传。",
+        "file_summary": "{{pages}} 页 · {{size}} · {{parts}} 个分片",
+        "preparing_description": "正在检查页数并生成本地分片，请稍候。",
+        "preparing_title": "正在准备 PDF 拆分方案",
+        "title": "拆分大型 PDF 文件"
+      },
       "preview": {
         "failed": "预览原文失败",
         "unavailable": "当前数据源没有可预览的原文"
@@ -3154,7 +3166,9 @@
         "embedding": "嵌入中",
         "error": "错误",
         "pending": "等待中",
-        "ready": "就绪"
+        "provider_timeout": "服务商超时",
+        "ready": "就绪",
+        "size_exceeded": "超出 {{limit}}"
       },
       "table": {
         "aria_label": "数据源列表",

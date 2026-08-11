@@ -420,7 +420,7 @@ vi.mock('../components/RestoreKnowledgeBaseDialog', () => ({
               embeddingModelId: 'openai::text-embedding-3-small',
               dimensions: 1024
             })
-            onRestored(result.base)
+            if (result.status === 'restored') onRestored(result.base)
             onOpenChange(false)
           }}>
           Submit Restore
@@ -645,7 +645,7 @@ describe('KnowledgePage', () => {
       error: undefined
     })
     mockUseReindexKnowledgeItem.mockReturnValue({
-      reindexItems: vi.fn(),
+      reindexItems: vi.fn().mockResolvedValue({ status: 'scheduled' }),
       reindexItem: vi.fn(),
       isReindexing: false,
       error: undefined
@@ -830,7 +830,7 @@ describe('KnowledgePage', () => {
 
   it('wires data source reindex actions to the selected base reindex hook', async () => {
     const reindexItem = vi.fn()
-    const reindexItems = vi.fn()
+    const reindexItems = vi.fn().mockResolvedValue({ status: 'scheduled' })
     mockUseKnowledgeBases.mockReturnValue({
       bases: [createKnowledgeBase({ id: 'base-1', name: 'Base 1' })],
       isLoading: false,
@@ -861,8 +861,9 @@ describe('KnowledgePage', () => {
     fireEvent.click(screen.getByRole('button', { name: 'ReindexItems' }))
 
     expect(mockUseReindexKnowledgeItem).toHaveBeenCalledWith('base-1')
-    expect(reindexItem).toHaveBeenCalledWith(expect.objectContaining({ id: 'item-1' }))
-    expect(reindexItems).toHaveBeenCalledWith(['item-1'])
+    expect(reindexItem).not.toHaveBeenCalled()
+    expect(reindexItems).toHaveBeenNthCalledWith(1, ['item-1'])
+    expect(reindexItems).toHaveBeenNthCalledWith(2, ['item-1'])
   })
 
   it('opens item chunks from the data source list and returns to the list', async () => {
@@ -1566,7 +1567,9 @@ describe('KnowledgePage', () => {
       embeddingModelId: 'openai::text-embedding-3-small'
     })
     let bases = [failedBase]
-    const restoreBase = vi.fn().mockResolvedValue({ base: restoredBase, skippedMissingSourceCount: 0 })
+    const restoreBase = vi
+      .fn()
+      .mockResolvedValue({ status: 'restored', base: restoredBase, skippedMissingSourceCount: 0 })
 
     mockUseKnowledgeBases.mockImplementation(() => ({
       bases,
@@ -1643,7 +1646,9 @@ describe('KnowledgePage', () => {
       embeddingModelId: 'openai::text-embedding-3-small'
     })
     let bases = [failedBase]
-    const restoreBase = vi.fn().mockResolvedValue({ base: restoredBase, skippedMissingSourceCount: 0 })
+    const restoreBase = vi
+      .fn()
+      .mockResolvedValue({ status: 'restored', base: restoredBase, skippedMissingSourceCount: 0 })
 
     mockUseKnowledgeBases.mockImplementation(() => ({
       bases,

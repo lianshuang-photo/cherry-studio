@@ -1,7 +1,7 @@
 import '@testing-library/jest-dom/vitest'
 
 import { toast } from '@renderer/services/toast'
-import { KNOWLEDGE_ITEM_ERROR_DIRECTORY_NOT_MIGRATED } from '@shared/data/types/knowledge'
+import { KNOWLEDGE_ITEM_ERROR_DIRECTORY_NOT_MIGRATED, type KnowledgeItemOf } from '@shared/data/types/knowledge'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import type { ReactNode } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -45,16 +45,19 @@ vi.mock('@cherrystudio/ui', () => ({
   ),
   Checkbox: ({
     checked,
+    disabled,
     onCheckedChange,
     'aria-label': ariaLabel
   }: {
     checked?: boolean | 'indeterminate'
+    disabled?: boolean
     onCheckedChange?: (checked: boolean | 'indeterminate') => void
     'aria-label'?: string
   }) => (
     <input
       type="checkbox"
       aria-label={ariaLabel}
+      disabled={disabled}
       checked={checked === true}
       onChange={(event) => onCheckedChange?.(event.target.checked)}
     />
@@ -169,7 +172,7 @@ vi.mock('react-i18next', () => ({
     i18n: {
       language: 'zh-CN'
     },
-    t: (key: string, options?: Record<string, number>) => {
+    t: (key: string, options?: Record<string, string | number>) => {
       if (key === 'knowledge.data_source.status.copying') {
         return `复制中 ${options?.percent}%`
       }
@@ -180,6 +183,8 @@ vi.mock('react-i18next', () => ({
         'knowledge.data_source.status.embedding': '向量化中',
         'knowledge.data_source.status.chunking': '分块中',
         'knowledge.data_source.status.pending': '等待中',
+        'knowledge.data_source.status.provider_timeout': '服务商超时',
+        'knowledge.data_source.status.size_exceeded': `超出 ${options?.limit}`,
         'knowledge.data_source.actions.preview_source': '预览原文',
         'knowledge.data_source.actions.view_chunks': '查看 Chunks',
         'knowledge.data_source.actions.reindex': '重新索引',
@@ -249,7 +254,7 @@ describe('KnowledgeItemRow', () => {
   it('renders the failed status label for failed items', () => {
     render(<KnowledgeItemRow item={createFileItem({ id: 'file-1', status: 'failed' })} {...defaultHandlers} />)
 
-    expect(screen.getByText('失败')).toBeInTheDocument()
+    expect(screen.getAllByText('Indexing failed')).not.toHaveLength(0)
     expect(screen.getByRole('tooltip')).toHaveTextContent('Indexing failed')
   })
 
@@ -265,8 +270,8 @@ describe('KnowledgeItemRow', () => {
       />
     )
 
-    // Red failure label with the localized migration-failed tooltip.
-    expect(screen.getByText('失败')).toBeInTheDocument()
+    // Short failure reason is visible; the complete localized reason remains in the tooltip.
+    expect(screen.getAllByText('该文件夹内容迁移失败，请删除后重新上传。')).not.toHaveLength(0)
     expect(screen.getByRole('tooltip')).toHaveTextContent('该文件夹内容迁移失败')
 
     // Re-indexing restores the index, but there are no chunks to view yet.
@@ -647,6 +652,38 @@ describe('KnowledgeItemRow', () => {
     await waitFor(() => {
       expect(toast.error).toHaveBeenCalledWith('删除数据源失败: delete failed')
     })
+  })
+
+  it('prevents selecting or deleting a managed PDF part while keeping reindex available', () => {
+    const file = createFileItem({ id: 'part-1', originName: 'report_0001-0030.pdf' })
+    const managedPart = {
+      ...file,
+      data: {
+        ...file.data,
+        pdfPart: { partIndex: 1, pageStart: 1, pageEnd: 30 }
+      }
+    }
+
+    render(<KnowledgeItemRow item={managedPart} {...defaultHandlers} selectable={false} />)
+
+    expect(screen.getByRole('checkbox', { name: '选择行' })).toBeDisabled()
+    fireEvent.contextMenu(screen.getByRole('row'))
+    expect(screen.queryByRole('button', { name: '删除' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '重新索引' })).toBeInTheDocument()
+  })
+
+  it('shows a concise size failure while retaining the complete processor error', () => {
+    const file = createFileItem({ id: 'part-1', status: 'failed' })
+    const failedPart: KnowledgeItemOf<'file'> = {
+      ...file,
+      status: 'failed',
+      error: 'PaddleOCR file is too large (must be smaller than 50MB)'
+    }
+
+    render(<KnowledgeItemRow item={failedPart} {...defaultHandlers} />)
+
+    expect(screen.getByText('超出 50MB')).toBeInTheDocument()
+    expect(screen.getByRole('tooltip')).toHaveTextContent('PaddleOCR file is too large')
   })
 
   it('calls onReindex without calling onClick when the reindex action is clicked', async () => {

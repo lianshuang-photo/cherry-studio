@@ -155,6 +155,7 @@ export const DEFAULT_KNOWLEDGE_CHUNK_STRATEGY: KnowledgeChunkStrategy = 'structu
 export const DEFAULT_KNOWLEDGE_CHUNK_SEPARATOR = '\\n\\n'
 export const KNOWLEDGE_RUNTIME_ITEMS_MAX = 100
 export const KNOWLEDGE_NOTE_CONTENT_MAX = 1_000_000
+export const KNOWLEDGE_PDF_SPLIT_PARTS_MAX = 200
 
 // ============================================================================
 // Knowledge Base Entity
@@ -298,6 +299,24 @@ const KnowledgeItemSharedSchema = z.strictObject({
   source: z.string().trim().min(1).describe('Original user-facing source identifier for the knowledge item.')
 })
 
+export const PdfSplitSourceSchema = z.strictObject({
+  relativePath: KnowledgeRelativePathSchema,
+  sourceName: z.string().trim().min(1),
+  totalPages: z.number().int().positive()
+})
+export type PdfSplitSource = z.infer<typeof PdfSplitSourceSchema>
+
+export const PdfPartSchema = z
+  .strictObject({
+    partIndex: z.number().int().positive(),
+    pageStart: z.number().int().positive(),
+    pageEnd: z.number().int().positive()
+  })
+  .refine((part) => part.pageStart <= part.pageEnd, {
+    message: 'PDF part pageStart must not exceed pageEnd'
+  })
+export type PdfPart = z.infer<typeof PdfPartSchema>
+
 /**
  * File item data.
  */
@@ -307,7 +326,8 @@ export const FileItemDataSchema = KnowledgeItemSharedSchema.extend({
   ),
   indexedRelativePath: KnowledgeRelativePathSchema.optional().describe(
     'Knowledge-base-relative, POSIX-normalized path for the file actually indexed, such as a processed markdown artifact.'
-  )
+  ),
+  pdfPart: PdfPartSchema.optional().describe('Managed page range when this file is part of a split PDF.')
 })
 export type FileItemData = z.infer<typeof FileItemDataSchema>
 
@@ -345,6 +365,9 @@ export const DirectoryItemDataSchema = KnowledgeItemSharedSchema.extend({
   // `raw/` directory prefix the container's files live under (e.g. `docs` or `docs_2`).
   relativePath: KnowledgeRelativePathSchema.optional().describe(
     'Knowledge-base-relative `raw/` directory prefix the expanded files are stored under, written on first expansion.'
+  ),
+  pdfSplitSource: PdfSplitSourceSchema.optional().describe(
+    'Private original PDF retained by a synthetic split directory for preview and rebuild.'
   )
 })
 export type DirectoryItemData = z.infer<typeof DirectoryItemDataSchema>
@@ -628,19 +651,11 @@ export const RestoreKnowledgeBaseSchema = z
     // A vector restore supplies the resolved model and vector size; a BM25-only
     // restore supplies null for both. The renderer probes dimensions when needed.
     dimensions: z.number().int().positive().nullable(),
-    embeddingModelId: z.string().trim().min(1).nullable()
+    embeddingModelId: z.string().trim().min(1).nullable(),
+    splitConfirmationToken: z.string().trim().min(1).optional()
   })
   .superRefine(refineRuntimeConfig)
 export type RestoreKnowledgeBaseDto = z.input<typeof RestoreKnowledgeBaseSchema>
-
-// Restore is a partial operation: root items whose source is genuinely gone are skipped rather
-// than aborting the whole restore, so the result reports how many were dropped for the UI to tell
-// the user (a silent count is a silent data loss).
-export const RestoreKnowledgeBaseResultSchema = z.strictObject({
-  base: KnowledgeBaseSchema,
-  skippedMissingSourceCount: z.number().int().nonnegative()
-})
-export type RestoreKnowledgeBaseResult = z.infer<typeof RestoreKnowledgeBaseResultSchema>
 
 const CreateKnowledgeItemBaseSchema = z.strictObject({
   groupId: KnowledgeItemIdSchema.nullable().optional()
@@ -761,15 +776,64 @@ export const KnowledgeAddItemConflictSchema = z.object({
 })
 export type KnowledgeAddItemConflict = z.infer<typeof KnowledgeAddItemConflictSchema>
 
+export const KnowledgePdfSplitPartPlanSchema = z.strictObject({
+  pageStart: z.number().int().positive(),
+  pageEnd: z.number().int().positive(),
+  bytes: z.number().int().positive()
+})
+export type KnowledgePdfSplitPartPlan = z.infer<typeof KnowledgePdfSplitPartPlanSchema>
+
+export const KnowledgePdfSplitFilePlanSchema = z.strictObject({
+  sourceName: z.string().trim().min(1),
+  pageCount: z.number().int().positive(),
+  sourceBytes: z.number().int().positive(),
+  parts: z.array(KnowledgePdfSplitPartPlanSchema).min(1).max(KNOWLEDGE_PDF_SPLIT_PARTS_MAX)
+})
+export type KnowledgePdfSplitFilePlan = z.infer<typeof KnowledgePdfSplitFilePlanSchema>
+
+export const KnowledgePdfSplitConfirmationSchema = z.strictObject({
+  token: z.string().trim().min(1),
+  expiresAt: z.iso.datetime(),
+  processorId: z.string().trim().min(1),
+  files: z.array(KnowledgePdfSplitFilePlanSchema).min(1),
+  totalTasks: z.number().int().positive().max(KNOWLEDGE_PDF_SPLIT_PARTS_MAX),
+  estimatedDiskBytes: z.number().int().positive()
+})
+export type KnowledgePdfSplitConfirmation = z.infer<typeof KnowledgePdfSplitConfirmationSchema>
+
+const KnowledgeSplitConfirmationRequiredResultSchema = z.strictObject({
+  status: z.literal('split_confirmation_required'),
+  confirmation: KnowledgePdfSplitConfirmationSchema
+})
+
+// Restore is a partial operation: root items whose source is genuinely gone are skipped rather
+// than aborting the whole restore, so the restored branch reports how many were dropped.
+export const RestoreKnowledgeBaseResultSchema = z.discriminatedUnion('status', [
+  z.strictObject({
+    status: z.literal('restored'),
+    base: KnowledgeBaseSchema,
+    skippedMissingSourceCount: z.number().int().nonnegative()
+  }),
+  KnowledgeSplitConfirmationRequiredResultSchema
+])
+export type RestoreKnowledgeBaseResult = z.infer<typeof RestoreKnowledgeBaseResultSchema>
+
 /**
  * Result of `addItems`. `conflicts` is only returned by a `detect` pass that
  * found collisions and added nothing; `added` means the batch was applied.
  */
 export const KnowledgeAddItemsResultSchema = z.discriminatedUnion('status', [
-  z.object({ status: z.literal('added') }),
-  z.object({ status: z.literal('conflicts'), conflicts: z.array(KnowledgeAddItemConflictSchema) })
+  z.strictObject({ status: z.literal('added') }),
+  z.strictObject({ status: z.literal('conflicts'), conflicts: z.array(KnowledgeAddItemConflictSchema) }),
+  KnowledgeSplitConfirmationRequiredResultSchema
 ])
 export type KnowledgeAddItemsResult = z.infer<typeof KnowledgeAddItemsResultSchema>
+
+export const KnowledgeReindexItemsResultSchema = z.discriminatedUnion('status', [
+  z.strictObject({ status: z.literal('scheduled') }),
+  KnowledgeSplitConfirmationRequiredResultSchema
+])
+export type KnowledgeReindexItemsResult = z.infer<typeof KnowledgeReindexItemsResultSchema>
 
 // ============================================================================
 // Item Display Title / Conflict Key Helpers
@@ -788,6 +852,9 @@ export interface KnowledgeItemTitleSource {
     content?: string
     url?: string
     relativePath?: string
+    pdfSplitSource?: {
+      sourceName: string
+    }
   }
 }
 
@@ -866,6 +933,7 @@ export function getKnowledgeItemDisplayTitle(item: KnowledgeItemTitleSource): st
     case 'file':
       return getKnowledgePathBasename(data.relativePath || data.source || '')
     case 'directory':
+      if (data.pdfSplitSource) return getSyntheticPdfDisplayTitle(data)
       return getKnowledgePathBasename(data.relativePath || data.source || '')
     case 'note':
       return getKnowledgeNoteName(data)
@@ -894,8 +962,11 @@ export function getKnowledgeItemConflictKey(item: KnowledgeItemTitleSource): str
   const data = item.data
   switch (item.type) {
     case 'file':
-    case 'directory':
       return getKnowledgePathBasename(data.relativePath || data.source || '')
+    case 'directory':
+      return data.pdfSplitSource
+        ? getSyntheticPdfDisplayTitle(data)
+        : getKnowledgePathBasename(data.relativePath || data.source || '')
     case 'note': {
       const name = getKnowledgeNoteName(data)
       // An unnamed note has no real name to collide on — keep the empty key so detection skips it.
@@ -906,4 +977,17 @@ export function getKnowledgeItemConflictKey(item: KnowledgeItemTitleSource): str
     case 'url':
       return (data.url || '').trim()
   }
+}
+
+/** Presentation/conflict type for an item; synthetic PDF containers behave like files. */
+export function getKnowledgeItemDisplayType(item: KnowledgeItemTitleSource): KnowledgeItemType {
+  return item.type === 'directory' && item.data.pdfSplitSource ? 'file' : item.type
+}
+
+function getSyntheticPdfDisplayTitle(data: KnowledgeItemTitleSource['data']): string {
+  const sourceName = getKnowledgePathBasename(data.pdfSplitSource?.sourceName || data.source || '')
+  const prefix = getKnowledgePathBasename(data.relativePath || data.source || sourceName)
+  const extensionIndex = sourceName.lastIndexOf('.')
+  const extension = extensionIndex > 0 ? sourceName.slice(extensionIndex) : ''
+  return extension && !prefix.toLowerCase().endsWith(extension.toLowerCase()) ? `${prefix}${extension}` : prefix
 }

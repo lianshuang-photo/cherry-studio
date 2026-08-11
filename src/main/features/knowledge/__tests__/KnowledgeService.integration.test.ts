@@ -137,12 +137,15 @@ describe('KnowledgeService integration', () => {
   it('restores a failed base into a new base and enqueues indexing for restored roots', async () => {
     const service = new KnowledgeService()
 
-    const { base: restoredBase, skippedMissingSourceCount } = await service.restoreBase({
+    const restoreResult = await service.restoreBase({
       sourceBaseId: SOURCE_BASE_ID,
       name: 'Legacy KB_bak',
       embeddingModelId,
       dimensions: 1536
     })
+    expect(restoreResult.status).toBe('restored')
+    if (restoreResult.status !== 'restored') throw new Error('Expected restore to complete')
+    const { base: restoredBase, skippedMissingSourceCount } = restoreResult
 
     // All of this base's sources are present, so nothing is skipped.
     expect(skippedMissingSourceCount).toBe(0)

@@ -363,6 +363,12 @@ export const kbManageInputSchema = z.object({
     .min(1)
     .optional()
     .describe('For action="add", type="note": optional display title (defaults to the note\'s first line).'),
+  splitConfirmationToken: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe('Cherry-managed PDF split approval token. Never invent or modify this value.'),
   conceptIds: z
     .array(z.string().trim().min(1))
     .optional()

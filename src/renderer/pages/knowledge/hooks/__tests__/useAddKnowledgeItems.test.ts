@@ -1,4 +1,5 @@
 import { useAddKnowledgeItems } from '@renderer/hooks/useKnowledgeItems'
+import type { AbsoluteFilePath } from '@shared/types/file'
 import { mockRendererLoggerService } from '@test-mocks/RendererLoggerService'
 import { act, renderHook } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -78,6 +79,51 @@ describe('useAddKnowledgeItems', () => {
     expect(mockInvalidateCache).not.toHaveBeenCalled()
     expect(result.current.error).toBeUndefined()
     expect(result.current.isSubmitting).toBe(false)
+  })
+
+  it('returns a split confirmation without refreshing and sends its token on confirmation', async () => {
+    const confirmationResult = {
+      status: 'split_confirmation_required' as const,
+      confirmation: {
+        token: 'split-token',
+        expiresAt: '2026-08-10T08:10:00.000Z',
+        processorId: 'doc2x',
+        files: [
+          {
+            sourceName: 'report.pdf',
+            pageCount: 31,
+            sourceBytes: 1024,
+            parts: [{ pageStart: 1, pageEnd: 31, bytes: 1024 }]
+          }
+        ],
+        totalTasks: 1,
+        estimatedDiskBytes: 1024
+      }
+    }
+    const items = [
+      {
+        type: 'file' as const,
+        data: { source: '/docs/report.pdf', path: '/docs/report.pdf' as AbsoluteFilePath }
+      }
+    ]
+    mockIpcRequest.mockResolvedValueOnce(confirmationResult).mockResolvedValueOnce({ status: 'added' })
+    const { result } = renderHook(() => useAddKnowledgeItems('base-1'))
+
+    await act(async () => {
+      await expect(result.current.submit(items, 'detect')).resolves.toEqual(confirmationResult)
+    })
+    expect(mockInvalidateCache).not.toHaveBeenCalled()
+
+    await act(async () => {
+      await expect(result.current.submit(items, 'detect', 'split-token')).resolves.toEqual({ status: 'added' })
+    })
+    expect(mockIpcRequest).toHaveBeenLastCalledWith('knowledge.add_items', {
+      baseId: 'base-1',
+      items,
+      conflictStrategy: 'detect',
+      splitConfirmationToken: 'split-token'
+    })
+    expect(mockInvalidateCache).toHaveBeenCalledTimes(1)
   })
 
   it('keeps submit rejected, refreshes items, and exposes inline error when orchestration rejects', async () => {

@@ -74,6 +74,7 @@ describe('resolveProcessorConfig', () => {
           feature: 'document_to_markdown',
           inputs: ['document'],
           output: 'markdown',
+          maxInputBytes: 200 * 1024 ** 2,
           apiHost: 'http://127.0.0.1:9000'
         }
       ],

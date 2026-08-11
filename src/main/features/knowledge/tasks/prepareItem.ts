@@ -7,10 +7,12 @@ import {
   type KnowledgeItemType
 } from '@shared/data/types/knowledge'
 
+import { pdfSplitService } from '../ingestion/pdfSplit/PdfSplitService'
 import { type IndexableKnowledgeItem, isIndexableKnowledgeItem } from '../items'
 import { collectKnowledgeReservedRelativePaths } from '../pathStorage'
 import {
   chooseDirectoryPathPrefix,
+  type DirectoryPdfSplitPublisher,
   expandDirectoryOwnerToTree,
   type ExpandedDirectoryNode
 } from '../pipeline/sources/directory'
@@ -46,6 +48,10 @@ async function prepareDirectoryForRuntime(
   signal: AbortSignal,
   onDirectoryCopyProgress: (percent: number) => void
 ): Promise<IndexableKnowledgeItem[]> {
+  if (item.data.pdfSplitSource) {
+    return await prepareSyntheticPdfForRuntime(baseId, item, signal)
+  }
+
   // Exclude this container itself: on reindex it already owns its `relativePath`
   // prefix, and counting it as reserved would self-collide it to `_1` every time.
   const reservedTopLevelNames = collectReservedTopLevelNames(baseId, item.id)
@@ -58,7 +64,57 @@ async function prepareDirectoryForRuntime(
   // shows the on-disk name (e.g. `docs_2`) and delete removes the shell by it.
   knowledgeItemService.updateDirectoryRelativePath(item.id, pathPrefix)
 
-  const children = await expandDirectoryOwnerToTree(item, baseId, pathPrefix, signal, onDirectoryCopyProgress)
+  await pdfSplitService.assertDirectoryBundleCurrent(item.id, signal)
+  const stagedSplits = pdfSplitService.getDirectorySplits(item.id)
+  const manifest = pdfSplitService.getDirectoryManifest(item.id)
+  const stagedSplitBySource = new Map(stagedSplits.map((split) => [split.sourcePath, split]))
+  const pdfSplitPublisher: DirectoryPdfSplitPublisher | undefined =
+    stagedSplits.length > 0
+      ? {
+          hasSplit: (sourcePath) => stagedSplitBySource.has(sourcePath),
+          publish: async (sourcePath, relativePrefix, publishSignal) => {
+            const split = stagedSplitBySource.get(sourcePath)
+            if (!split) throw new Error(`Missing staged PDF split for ${sourcePath}`)
+            const published = await pdfSplitService.publishStagedSplit(baseId, split, relativePrefix, {
+              signal: publishSignal,
+              overwrite: true
+            })
+            return {
+              type: 'directory',
+              data: {
+                source: split.sourcePath,
+                relativePath: relativePrefix,
+                pdfSplitSource: {
+                  relativePath: published.sourceRelativePath,
+                  sourceName: pathBasename(split.sourcePath),
+                  totalPages: split.pageCount
+                }
+              },
+              children: published.parts.map((part, index) => ({
+                type: 'file' as const,
+                data: {
+                  source: part.fileName,
+                  relativePath: part.relativePath,
+                  pdfPart: {
+                    partIndex: index + 1,
+                    pageStart: part.pageStart,
+                    pageEnd: part.pageEnd
+                  }
+                }
+              }))
+            }
+          }
+        }
+      : undefined
+  const children = await expandDirectoryOwnerToTree(
+    item,
+    baseId,
+    pathPrefix,
+    signal,
+    onDirectoryCopyProgress,
+    pdfSplitPublisher,
+    manifest
+  )
   signal.throwIfAborted()
 
   if (children.length === 0) {
@@ -72,6 +128,42 @@ async function prepareDirectoryForRuntime(
   }
 
   return await createDirectoryChildren(baseId, item.id, children, signal)
+}
+
+async function prepareSyntheticPdfForRuntime(
+  baseId: string,
+  item: KnowledgeItemOf<'directory'>,
+  signal: AbortSignal
+): Promise<IndexableKnowledgeItem[]> {
+  const [split] = pdfSplitService.getDirectorySplits(item.id)
+  if (!split) {
+    throw new Error('PDF split confirmation is required before rebuilding this document')
+  }
+  const source = item.data.pdfSplitSource
+  if (!source || !item.data.relativePath) {
+    throw new Error(`Synthetic PDF directory '${item.id}' is missing its private source metadata`)
+  }
+  const published = await pdfSplitService.publishStagedSplit(baseId, split, item.data.relativePath, {
+    signal,
+    sourceAlreadyStoredRelativePath: source.relativePath,
+    overwrite: true
+  })
+  const replaced = knowledgeItemService.replaceWithPdfSplitSubtree(baseId, item.id, {
+    data: {
+      ...item.data,
+      pdfSplitSource: { ...source, totalPages: split.pageCount }
+    },
+    parts: published.parts.map((part, index) => ({
+      source: part.fileName,
+      relativePath: part.relativePath,
+      pdfPart: {
+        partIndex: index + 1,
+        pageStart: part.pageStart,
+        pageEnd: part.pageEnd
+      }
+    }))
+  })
+  return replaced.parts as IndexableKnowledgeItem[]
 }
 
 /**
@@ -118,6 +210,22 @@ async function createDirectoryChildren(
       continue
     }
 
+    if (child.data.pdfSplitSource) {
+      const partChildren = child.children.filter(
+        (part): part is Extract<ExpandedDirectoryNode, { type: 'file' }> => part.type === 'file'
+      )
+      if (partChildren.length !== child.children.length) {
+        throw new Error('Synthetic PDF directory may contain only file parts')
+      }
+      const created = knowledgeItemService.createPdfSplitSubtree(baseId, {
+        groupId: parentId,
+        data: child.data,
+        parts: partChildren.map((part) => part.data)
+      })
+      leafItems.push(...(created.parts as IndexableKnowledgeItem[]))
+      continue
+    }
+
     const createdDirectory = await createRuntimeItem(
       baseId,
       {
@@ -133,6 +241,15 @@ async function createDirectoryChildren(
   }
 
   return leafItems
+}
+
+function pathBasename(value: string): string {
+  return (
+    value
+      .replace(/[/\\]+$/, '')
+      .split(/[/\\]/)
+      .pop() || value
+  )
 }
 
 async function createRuntimeItem<T extends KnowledgeItemType>(

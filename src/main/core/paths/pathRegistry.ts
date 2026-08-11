@@ -187,6 +187,7 @@ export function buildPathRegistry() {
     'feature.cli.temp': path.join(appTemp, 'cli'),
     'feature.dxt.uploads.temp': path.join(appTemp, 'dxt_uploads'),
     'feature.file_processing.temp': path.join(appTemp, 'file-processing'),
+    'feature.knowledgebase.pdf_split.temp': path.join(appTemp, 'knowledge-pdf-split'),
     'feature.preprocess.temp': path.join(appTemp, 'preprocess'),
     'feature.lan_transfer.temp': path.join(appTemp, 'lan-transfer'),
     // FileManager's `withTempCopy` escape hatch parent dir; each call mkdtemps a

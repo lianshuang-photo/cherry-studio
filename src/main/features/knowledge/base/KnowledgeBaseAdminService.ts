@@ -4,6 +4,7 @@ import { knowledgeItemService } from '@data/services/KnowledgeItemService'
 import { loggerService } from '@logger'
 import type { KeyedMutex } from '@main/core/concurrency/KeyedMutex'
 import { DataApiErrorFactory } from '@shared/data/api/errors'
+import { FileProcessorIdSchema } from '@shared/data/presets/fileProcessing'
 import {
   type CreateKnowledgeBaseDto,
   type KnowledgeAddItemInput,
@@ -15,6 +16,8 @@ import {
 } from '@shared/data/types/knowledge'
 
 import type { KnowledgeIngestionService } from '../ingestion/KnowledgeIngestionService'
+import { pdfSplitService } from '../ingestion/pdfSplit/PdfSplitService'
+import type { PdfSplitBundle } from '../ingestion/pdfSplit/types'
 import { classifyKnowledgeItemSource } from '../items'
 import { getKnowledgeBaseFilePath } from '../pathStorage'
 import { cancelActiveKnowledgeJobs } from '../tasks/utils/cancel'
@@ -154,9 +157,33 @@ export class KnowledgeBaseAdminService {
     }
 
     const inputs = restorableRootItems.map((item) => this.toRestoreRuntimeInput(sourceBase.id, item))
-    const restoredBase = await this.createBase(createDto)
+    let splitBundle: PdfSplitBundle | null = null
+    if (sourceBase.fileProcessorId) {
+      const splitRequest = {
+        sourceBaseId: sourceBase.id,
+        processorId: FileProcessorIdSchema.parse(sourceBase.fileProcessorId),
+        inputs
+      }
+      if (dto.splitConfirmationToken) {
+        splitBundle = await pdfSplitService.confirmRestore(splitRequest, dto.splitConfirmationToken)
+      } else {
+        const confirmation = await pdfSplitService.preflightRestore(splitRequest)
+        if (confirmation) return { status: 'split_confirmation_required', confirmation }
+      }
+    } else if (dto.splitConfirmationToken) {
+      await pdfSplitService.discard(dto.splitConfirmationToken)
+      throw new Error('PDF split confirmation is no longer valid; review the updated split plan and confirm again')
+    }
+
+    let restoredBase: KnowledgeBase
     try {
-      await this.ingestionService.addItems(restoredBase.id, inputs)
+      restoredBase = await this.createBase(createDto)
+    } catch (error) {
+      if (splitBundle) await pdfSplitService.discard(splitBundle.token)
+      throw error
+    }
+    try {
+      await this.ingestionService.addRestoredItems(restoredBase.id, inputs, splitBundle)
     } catch (error) {
       try {
         await this.deleteBase(restoredBase.id)
@@ -183,7 +210,7 @@ export class KnowledgeBaseAdminService {
       )
     }
 
-    return { base: restoredBase, skippedMissingSourceCount }
+    return { status: 'restored', base: restoredBase, skippedMissingSourceCount }
   }
 
   /** Whether the user has any knowledge base at all — a cheap count (not a full list) for tool-availability gating. */
@@ -232,6 +259,16 @@ export class KnowledgeBaseAdminService {
           // source of truth and re-capturing it into the new base on first index is
           // free and deterministic, so there is no snapshot file to carry across.
           data: { source: item.data.source, content: item.data.content }
+        })
+      }
+
+      if (item.type === 'directory' && item.data.pdfSplitSource) {
+        return KnowledgeAddItemInputSchema.parse({
+          type: 'file',
+          data: {
+            source: item.data.source,
+            path: getKnowledgeBaseFilePath(sourceBaseId, item.data.pdfSplitSource.relativePath)
+          }
         })
       }
 

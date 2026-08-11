@@ -1,6 +1,7 @@
 import {
   getKnowledgeItemConflictKey,
   getKnowledgeItemDisplayTitle,
+  getKnowledgeItemDisplayType,
   type KnowledgeAddItemConflict,
   type KnowledgeAddItemInput,
   type KnowledgeItem
@@ -51,7 +52,7 @@ export function resolveKnowledgeAddConflicts(
     if (detectionKey === '') {
       continue
     }
-    const mapKey = toConflictMapKey(item.type, detectionKey)
+    const mapKey = toConflictMapKey(getKnowledgeItemDisplayType(item), detectionKey)
     const group = existingByKey.get(mapKey)
     if (group) {
       group.push(item)
@@ -71,13 +72,14 @@ export function resolveKnowledgeAddConflicts(
     if (detectionKey === '') {
       return
     }
-    const mapKey = toConflictMapKey(input.type, detectionKey)
+    const displayType = getKnowledgeItemDisplayType(input)
+    const mapKey = toConflictMapKey(displayType, detectionKey)
     const existing = existingByKey.get(mapKey)
     const collides = existing !== undefined || seenBatchKeys.has(mapKey)
 
     if (collides && !conflictsByKey.has(mapKey)) {
       conflictsByKey.set(mapKey, {
-        type: input.type,
+        type: displayType,
         // First existing item per key gives a stable display title.
         title: getKnowledgeItemDisplayTitle(existing?.[0] ?? input)
       })
@@ -98,7 +100,7 @@ export function resolveKnowledgeAddConflicts(
     if (detectionKey === '') {
       return true
     }
-    const mapKey = toConflictMapKey(input.type, detectionKey)
+    const mapKey = toConflictMapKey(getKnowledgeItemDisplayType(input), detectionKey)
     return lastInputIndexByKey.get(mapKey) === index
   })
 

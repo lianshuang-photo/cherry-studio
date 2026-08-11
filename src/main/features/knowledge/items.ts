@@ -64,6 +64,9 @@ export async function classifyKnowledgeItemSource(
   item: KnowledgeItem
 ): Promise<KnowledgeItemSourceState> {
   if (item.type === 'directory') {
+    if (item.data.pdfSplitSource) {
+      return toSourceState(await probeKnowledgeFile(baseId, item.data.pdfSplitSource.relativePath))
+    }
     return toSourceState(await probeKnowledgeSourcePath(item.data.source))
   }
   if (item.type === 'file') {

@@ -39,6 +39,36 @@ describe('FileProcessorFeatureCapabilitySchema', () => {
 
     expect(result.success).toBe(false)
   })
+
+  it('publishes immutable PDF limits for every document processor', () => {
+    const documentCapabilities = PRESETS_FILE_PROCESSORS.flatMap((preset) =>
+      preset.capabilities
+        .filter((capability) => capability.feature === 'document_to_markdown')
+        .map((capability) => ({ processorId: preset.id, capability }))
+    )
+
+    expect(documentCapabilities).toHaveLength(6)
+    for (const { capability } of documentCapabilities) {
+      expect(capability.maxInputBytes).toBeGreaterThan(0)
+    }
+
+    expect(documentCapabilities.find(({ processorId }) => processorId === 'doc2x')?.capability).toMatchObject({
+      maxInputBytes: 1024 ** 3,
+      targetPagesPerPart: 30
+    })
+    expect(documentCapabilities.find(({ processorId }) => processorId === 'local-document')?.capability).toMatchObject({
+      maxInputBytes: 1024 ** 3,
+      targetPagesPerPart: 30
+    })
+    expect(documentCapabilities.find(({ processorId }) => processorId === 'mineru')?.capability).toMatchObject({
+      maxInputBytes: 200 * 1024 ** 2,
+      maxPagesPerPart: 200
+    })
+    expect(documentCapabilities.find(({ processorId }) => processorId === 'mistral')?.capability).toMatchObject({
+      maxInputBytes: 50 * 1024 ** 2,
+      maxPagesPerPart: 1000
+    })
+  })
 })
 
 describe('FileProcessorTemplatesSchema', () => {

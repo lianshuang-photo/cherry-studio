@@ -1,4 +1,9 @@
-import type { KnowledgeItem } from '@shared/data/types/knowledge'
+import {
+  getKnowledgeItemDisplayTitle,
+  getKnowledgeItemDisplayType,
+  getKnowledgePathBasename,
+  type KnowledgeItem
+} from '@shared/data/types/knowledge'
 
 import { dataSourceTypeDisplayConfig, type KnowledgeItemRowViewModel } from './models'
 
@@ -55,6 +60,16 @@ export const toKnowledgeItemRowViewModel = (item: KnowledgeItem, language: strin
     }
     case 'directory': {
       const config = dataSourceTypeDisplayConfig.directory
+      if (getKnowledgeItemDisplayType(item) === 'file') {
+        const sourceName = getKnowledgePathBasename(item.data.pdfSplitSource?.sourceName ?? item.data.source)
+        return {
+          title: getKnowledgeItemDisplayTitle(item),
+          suffix: sourceName.includes('.') ? (sourceName.split('.').pop()?.toLowerCase() ?? 'file') : 'file',
+          metaParts: config.getMetaParts(item, { language }),
+          icon: dataSourceTypeDisplayConfig.file.icon,
+          status: config.getStatus(item.status)
+        }
+      }
 
       return {
         title: config.getTitle(item, { language }),

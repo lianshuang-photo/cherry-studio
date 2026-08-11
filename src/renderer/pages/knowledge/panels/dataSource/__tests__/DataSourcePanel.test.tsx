@@ -637,7 +637,7 @@ describe('DataSourcePanel', () => {
       />
     )
 
-    expect(screen.getByText('失败')).toBeInTheDocument()
+    expect(screen.getByText('该文件夹内容迁移失败，请删除后重新上传。')).toBeInTheDocument()
     expect(screen.getByLabelText('该文件夹内容迁移失败，请删除后重新上传。')).toBeInTheDocument()
   })
 

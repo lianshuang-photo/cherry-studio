@@ -8,16 +8,19 @@ import { createFileItem, createNoteItem } from './testUtils'
 vi.mock('@cherrystudio/ui', () => ({
   Checkbox: ({
     checked,
+    disabled,
     onCheckedChange,
     'aria-label': ariaLabel
   }: {
     checked?: boolean | 'indeterminate'
+    disabled?: boolean
     onCheckedChange?: (checked: boolean | 'indeterminate') => void
     'aria-label'?: string
   }) => (
     <input
       type="checkbox"
       aria-label={ariaLabel}
+      disabled={disabled}
       checked={checked === true}
       onChange={(event) => onCheckedChange?.(event.target.checked)}
     />
@@ -154,6 +157,21 @@ describe('KnowledgeItemList', () => {
     expect(capturedGetItemKey?.(1)).toBe('note-1')
     // An out-of-range lookup (e.g. during the deferred-value lag) falls back to the index.
     expect(capturedGetItemKey?.(5)).toBe(5)
+  })
+
+  it('disables select all when the folder contains only managed PDF parts', () => {
+    const file = createFileItem({ id: 'part-1', originName: 'report_0001-0030.pdf' })
+    const managedPart = {
+      ...file,
+      data: { ...file.data, pdfPart: { partIndex: 1, pageStart: 1, pageEnd: 30 } }
+    }
+    const handleToggleAll = vi.fn()
+
+    render(<KnowledgeItemList items={[managedPart]} isLoading={false} {...noopProps} onToggleAll={handleToggleAll} />)
+
+    const selectAll = screen.getByRole('checkbox', { name: '全选' })
+    expect(selectAll).toBeDisabled()
+    expect(handleToggleAll).not.toHaveBeenCalled()
   })
 
   it('does not load more when scrolled but still far from the bottom', async () => {

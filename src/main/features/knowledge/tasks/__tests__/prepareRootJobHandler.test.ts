@@ -174,6 +174,27 @@ describe('prepare-root job handler', () => {
     expect(removeDirMock).not.toHaveBeenCalled()
   })
 
+  it('keeps the private original when rebuilding a synthetic PDF directory', async () => {
+    const handler = createPrepareRootJobHandler(knowledgeLockManager as never, ingestionService)
+    const item = createPinnedDirectoryItem('report')
+    knowledgeItemGetByIdMock.mockReturnValue({
+      ...item,
+      data: {
+        ...item.data,
+        pdfSplitSource: {
+          relativePath: 'report/.source/report.pdf',
+          sourceName: 'report.pdf',
+          totalPages: 31
+        }
+      }
+    })
+    knowledgeItemGetSubtreeItemsMock.mockReturnValue([])
+
+    await handler.execute(createCtx({ baseId: 'kb-1', itemId: 'dir-1' }, 'prepare-job'))
+
+    expect(removeDirMock).not.toHaveBeenCalledWith(getKnowledgeBaseFilePath('kb-1', 'report'))
+  })
+
   it('purges descendant rows before reclaiming the container shell', async () => {
     const handler = createPrepareRootJobHandler(knowledgeLockManager as never, ingestionService)
     const activeChild = createNoteItem('active-note', 'dir-1')

@@ -14,6 +14,7 @@ const kbReadConcept = vi.fn()
 const kbGrepConcept = vi.fn()
 const kbGetOrganizationTree = vi.fn()
 const kbAddItems = vi.fn()
+const kbDiscardSplitConfirmation = vi.fn()
 const kbDeleteConcepts = vi.fn()
 const kbRefreshConcepts = vi.fn()
 const listBasesForDiscovery = vi.fn()
@@ -42,6 +43,7 @@ vi.mock('@application', () => ({
           grepConcept: kbGrepConcept,
           getOrganizationTree: kbGetOrganizationTree,
           addItems: kbAddItems,
+          discardSplitConfirmation: kbDiscardSplitConfirmation,
           deleteConcepts: kbDeleteConcepts,
           refreshConcepts: kbRefreshConcepts,
           listBasesForDiscovery,
@@ -119,6 +121,7 @@ describe('cherryBuiltinTools', () => {
     kbGrepConcept.mockReset()
     kbGetOrganizationTree.mockReset()
     kbAddItems.mockReset()
+    kbDiscardSplitConfirmation.mockReset()
     kbDeleteConcepts.mockReset()
     kbRefreshConcepts.mockReset()
     listBasesForDiscovery.mockReset()
@@ -482,6 +485,30 @@ describe('cherryBuiltinTools', () => {
     ])
     expect(result.isError).toBeFalsy()
     expect(JSON.parse(textOf(result))).toEqual({ action: 'add', added: ['report.pdf'] })
+  })
+
+  it('runs an approved kb_manage PDF add with its split confirmation token', async () => {
+    kbAddItems.mockResolvedValue({ status: 'added' })
+
+    const result = await callCherryBuiltinTool(
+      'kb_manage',
+      {
+        baseId: 'b1',
+        action: 'add',
+        type: 'file',
+        path: '/Users/me/docs/report.pdf',
+        splitConfirmationToken: 'split-token'
+      },
+      signal
+    )
+
+    expect(kbAddItems).toHaveBeenCalledWith(
+      'b1',
+      [{ type: 'file', data: { source: 'report.pdf', path: '/Users/me/docs/report.pdf' } }],
+      undefined,
+      'split-token'
+    )
+    expect(result.isError).toBeFalsy()
   })
 
   it('runs kb_manage delete within the bound scope, forwarding conceptIds and the applied/notFound split', async () => {

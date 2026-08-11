@@ -13,12 +13,16 @@ export type KnowledgeSourcePlan =
   | { kind: 'needsFileProcessing' }
   | { kind: 'invalid'; reason: string }
 
-export function planKnowledgeItemSource(base: KnowledgeBase, item: KnowledgeItem): KnowledgeSourcePlan {
+export function planKnowledgeItemSource(
+  base: KnowledgeBase,
+  item: KnowledgeItem,
+  options: { forceFileProcessing?: boolean } = {}
+): KnowledgeSourcePlan {
   if (isContainerKnowledgeItem(item)) {
     return { kind: 'prepare-root' }
   }
 
-  if (needsFileProcessing(base, item)) {
+  if (needsFileProcessing(base, item, options.forceFileProcessing === true)) {
     return { kind: 'needsFileProcessing' }
   }
 
@@ -29,14 +33,14 @@ export function planKnowledgeItemSource(base: KnowledgeBase, item: KnowledgeItem
   return { kind: 'invalid', reason: 'Unsupported knowledge item type' }
 }
 
-function needsFileProcessing(base: KnowledgeBase, item: KnowledgeItem): boolean {
+function needsFileProcessing(base: KnowledgeBase, item: KnowledgeItem, forceFileProcessing: boolean): boolean {
   if (item.type !== 'file' || !base.fileProcessorId) {
     return false
   }
 
-  // A file that already carries its processed artifact — restored from another base,
-  // or already processed once — indexes straight from it; do not reprocess.
-  if (item.data.indexedRelativePath) {
+  // A restored file indexes straight from its copied artifact. Explicit user
+  // reindex bypasses this shortcut so the processor produces a fresh artifact.
+  if (item.data.indexedRelativePath && !forceFileProcessing) {
     return false
   }
 

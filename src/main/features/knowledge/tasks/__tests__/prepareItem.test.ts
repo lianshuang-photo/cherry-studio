@@ -1,6 +1,6 @@
 import type { KnowledgeItem } from '@shared/data/types/knowledge'
 import type { PosixRelativeFilePath } from '@shared/utils/file'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const {
   chooseDirectoryPathPrefixMock,
@@ -45,6 +45,7 @@ vi.mock('../../pipeline/sources/directory', () => ({
 import type { PrepareKnowledgeItemOptions } from '../prepareItem'
 
 const { prepareKnowledgeItem } = await import('../prepareItem')
+const { pdfSplitService } = await import('../../ingestion/pdfSplit/PdfSplitService')
 
 const baseId = 'kb-1'
 
@@ -104,6 +105,10 @@ function createFileItem(id = 'file-1', groupId: string | null = null): Knowledge
 }
 
 describe('prepareKnowledgeItem', () => {
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
   beforeEach(() => {
     vi.clearAllMocks()
 
@@ -172,7 +177,9 @@ describe('prepareKnowledgeItem', () => {
       baseId,
       'dir-root-prefix',
       options.signal,
-      options.onDirectoryCopyProgress
+      options.onDirectoryCopyProgress,
+      undefined,
+      undefined
     )
     expect(knowledgeItemUpdateDirectoryRelativePathMock).toHaveBeenCalledWith(root.id, 'dir-root-prefix')
     // The container prefix must be pinned BEFORE any byte is copied (expansion) or any child
@@ -196,6 +203,33 @@ describe('prepareKnowledgeItem', () => {
     // `childDir` is a directory: it's created active as `preparing` by `createActive`,
     // then flipped to `processing` once its own children finish being created.
     expect(knowledgeItemUpdateStatusMock).toHaveBeenCalledWith(childDir.id, 'processing')
+  })
+
+  it('revalidates and expands from the captured directory manifest', async () => {
+    const root = createDirectoryItem('dir-root')
+    const manifest = [
+      {
+        type: 'file' as const,
+        externalPath: '/docs/approved.md',
+        treePath: '/approved.md'
+      }
+    ]
+    const assertCurrent = vi.spyOn(pdfSplitService, 'assertDirectoryBundleCurrent').mockResolvedValueOnce()
+    vi.spyOn(pdfSplitService, 'getDirectoryManifest').mockReturnValueOnce(manifest)
+    const options = createPrepareOptions(root)
+
+    await prepareKnowledgeItem(options)
+
+    expect(assertCurrent).toHaveBeenCalledWith(root.id, options.signal)
+    expect(expandDirectoryOwnerToTreeMock).toHaveBeenCalledWith(
+      root,
+      baseId,
+      'docs',
+      options.signal,
+      options.onDirectoryCopyProgress,
+      undefined,
+      manifest
+    )
   })
 
   it('excludes the container itself from the reserved names so a reindex keeps its own prefix', () => {

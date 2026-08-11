@@ -48,6 +48,7 @@ const KnowledgeItemList = ({
   const { t } = useTranslation()
   const pendingLoadMoreRef = useRef(false)
   const deferredItems = useDeferredValue(items)
+  const selectableItems = items.filter((item) => !(item.type === 'file' && item.data.pdfPart))
 
   useEffect(() => {
     pendingLoadMoreRef.current = false
@@ -82,6 +83,7 @@ const KnowledgeItemList = ({
       <KnowledgeItemRow
         item={item}
         selected={selectedIds.has(item.id)}
+        selectable={!(item.type === 'file' && item.data.pdfPart)}
         onToggleSelect={(next) => onToggleOne(item.id, next)}
         onClick={() => onActivate(item)}
         onDelete={() => onDelete(item)}
@@ -105,8 +107,8 @@ const KnowledgeItemList = ({
     return null
   }
 
-  const allSelected = items.every((item) => selectedIds.has(item.id))
-  const someSelected = !allSelected && items.some((item) => selectedIds.has(item.id))
+  const allSelected = selectableItems.length > 0 && selectableItems.every((item) => selectedIds.has(item.id))
+  const someSelected = !allSelected && selectableItems.some((item) => selectedIds.has(item.id))
 
   // ARIA grid semantics, lost in the table→CSS-grid migration. The virtualizer's scroller carries
   // role="rowgroup" (its wrapper is role="presentation" so the grid owns the rowgroup directly) and
@@ -127,6 +129,7 @@ const KnowledgeItemList = ({
                 size="sm"
                 className={knowledgeDataSourceCheckboxClassName}
                 aria-label={t('knowledge.data_source.table.select_all')}
+                disabled={selectableItems.length === 0}
                 checked={allSelected ? true : someSelected ? 'indeterminate' : false}
                 onCheckedChange={(checked) => onToggleAll(checked === true)}
               />

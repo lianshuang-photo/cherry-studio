@@ -1,7 +1,8 @@
 import { KNOWLEDGE_ITEM_ERROR_INDEXING_INTERRUPTED } from '@shared/data/types/knowledge'
 import { MockMainCacheServiceExport } from '@test-mocks/main/CacheService'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
+import { pdfSplitService } from '../../ingestion/pdfSplit/PdfSplitService'
 import {
   cancelMock,
   createCtx,
@@ -22,6 +23,7 @@ import {
   listMock,
   loggerWarnMock,
   probeKnowledgeSourcePathMock,
+  PROCESSED_RELATIVE_PATH,
   scheduleItemMock
 } from './jobHandlerTestUtils'
 
@@ -47,6 +49,29 @@ describe('reindex-subtree job handler', () => {
     expect(scheduleItemMock).toHaveBeenCalledWith('kb-1', 'dir-1', 'reindex-job')
     // A clean rebuild with nothing skipped omits skippedMissingSource entirely (exact-object match).
     expect(ctx.reportProgress).toHaveBeenCalledWith(100, { stage: 'done', totalFiles: 1 })
+  })
+
+  it('validates a bound directory plan before deleting vectors or expanded rows', async () => {
+    const handler = createReindexSubtreeJobHandler(knowledgeLockManager as never, ingestionService)
+    const root = createDirectoryItem('dir-1')
+    const child = createNoteItem('note-1', root.id)
+    knowledgeItemGetSubtreeItemsMock.mockImplementation(
+      (_baseId: string, _rootIds: string[], options: { includeRoots?: boolean; leafOnly?: boolean } = {}) => {
+        if (options.leafOnly) return [child]
+        return options.includeRoots ? [root, child] : [child]
+      }
+    )
+    const assertCurrent = vi
+      .spyOn(pdfSplitService, 'assertDirectoryBundleCurrent')
+      .mockRejectedValueOnce(new Error('Directory changed'))
+
+    await expect(handler.execute(createCtx({ baseId: 'kb-1', rootItemIds: [root.id] }, 'reindex-job'))).rejects.toThrow(
+      'Directory changed'
+    )
+
+    expect(deleteMaterialsMock).not.toHaveBeenCalled()
+    expect(deleteItemsByIdsMock).not.toHaveBeenCalled()
+    assertCurrent.mockRestore()
   })
 
   it('clears stale directory copy progress before marking the directory as preparing', async () => {
@@ -214,6 +239,24 @@ describe('reindex-subtree job handler', () => {
     expect(deleteItemsByIdsMock).not.toHaveBeenCalled()
     expect(knowledgeItemUpdateStatusMock).toHaveBeenCalledWith('note-1', 'processing')
     expect(scheduleItemMock).toHaveBeenCalledWith('kb-1', 'note-1', 'reindex-job')
+  })
+
+  it('forces a selected file root through its processor when rescheduling', async () => {
+    const handler = createReindexSubtreeJobHandler(knowledgeLockManager as never, ingestionService)
+    const root = createFileItem(FILE_ITEM_ID)
+    root.data.indexedRelativePath = PROCESSED_RELATIVE_PATH
+    knowledgeItemGetSubtreeItemsMock.mockImplementation(
+      (_baseId: string, _rootIds: string[], options: { includeRoots?: boolean; leafOnly?: boolean } = {}) => {
+        if (options.leafOnly || options.includeRoots) return [root]
+        return []
+      }
+    )
+
+    await handler.execute(createCtx({ baseId: 'kb-1', rootItemIds: [FILE_ITEM_ID] }, 'reindex-job'))
+
+    expect(scheduleItemMock).toHaveBeenCalledWith('kb-1', FILE_ITEM_ID, 'reindex-job', {
+      forceFileProcessing: true
+    })
   })
 
   it('marks only unscheduled reset roots failed when rescheduling fails', async () => {

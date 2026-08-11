@@ -66,4 +66,12 @@ describe('planKnowledgeItemSource', () => {
     item.data.indexedRelativePath = 'source.md' as PosixRelativeFilePath
     expect(planKnowledgeItemSource(createBase(), item)).toEqual({ kind: 'index-documents' })
   })
+
+  it('routes an already processed PDF back through the processor for an explicit rebuild', () => {
+    const item = createFileItem('/docs/source.pdf')
+    item.data.indexedRelativePath = 'source.md' as PosixRelativeFilePath
+    expect(planKnowledgeItemSource(createBase(), item, { forceFileProcessing: true })).toEqual({
+      kind: 'needsFileProcessing'
+    })
+  })
 })

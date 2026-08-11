@@ -225,7 +225,11 @@ const DataSourcePanelContent = ({
 
   const handleToggleAll = useCallback(
     (next: boolean) => {
-      setSelectedIds(next ? new Set(items.map((item) => item.id)) : new Set())
+      setSelectedIds(
+        next
+          ? new Set(items.filter((item) => !(item.type === 'file' && item.data.pdfPart)).map((item) => item.id))
+          : new Set()
+      )
     },
     [items]
   )

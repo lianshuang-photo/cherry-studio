@@ -1,18 +1,36 @@
 import { Button, PageSidePanel } from '@cherrystudio/ui'
+import { loggerService } from '@logger'
 import { FilePreview } from '@renderer/components/FilePreview'
-import { useDeleteKnowledgeItem, useKnowledgeItems, useReindexKnowledgeItem } from '@renderer/hooks/useKnowledgeItems'
-import type { KnowledgeItemOf } from '@shared/data/types/knowledge'
+import {
+  discardKnowledgePdfSplitConfirmation,
+  type KnowledgeReindexSubmissionResult,
+  useDeleteKnowledgeItem,
+  useKnowledgeItems,
+  useReindexKnowledgeItem
+} from '@renderer/hooks/useKnowledgeItems'
+import { formatErrorMessageWithPrefix } from '@renderer/utils/error'
+import type { KnowledgeItem, KnowledgeItemOf, KnowledgePdfSplitConfirmation } from '@shared/data/types/knowledge'
 import { ArrowLeft } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import DetailHeader from '../components/DetailHeader'
+import PdfSplitConfirmationDialog from '../components/PdfSplitConfirmationDialog'
 import { useKnowledgePage } from '../KnowledgePageProvider'
 import DataSourcePanel from '../panels/dataSource/DataSourcePanel'
 import KnowledgeItemChunkDetailPanel from '../panels/dataSource/KnowledgeItemChunkDetailPanel'
 import KnowledgeItemNoteContentPanel from '../panels/dataSource/KnowledgeItemNoteContentPanel'
 import RagConfigPanel from '../panels/ragConfig/RagConfigPanel'
 import RecallTestPanel from '../panels/recallTest/RecallTestPanel'
+
+const logger = loggerService.withContext('KnowledgePageDetailSection')
+
+interface PendingReindexPdfSplit {
+  confirmation: KnowledgePdfSplitConfirmation
+  itemIds: string[]
+  remainingItemIds: string[]
+}
+
 const KnowledgePageDetailSection = () => {
   const { t } = useTranslation()
   const {
@@ -40,6 +58,9 @@ const KnowledgePageDetailSection = () => {
   // Directory drill-down: the stack holds the directory items descended into (empty = base root).
   // The current directory's id becomes the item-list's `groupId`, listing that folder's children.
   const [directoryStack, setDirectoryStack] = useState<KnowledgeItemOf<'directory'>[]>([])
+  const [pendingReindexPdfSplit, setPendingReindexPdfSplit] = useState<PendingReindexPdfSplit | null>(null)
+  const [reindexPdfSplitError, setReindexPdfSplitError] = useState('')
+  const [isConfirmingReindexPdfSplit, setIsConfirmingReindexPdfSplit] = useState(false)
   const currentDirectory = directoryStack.at(-1) ?? null
 
   // Every base selection starts from that base's root, including re-selecting the current base.
@@ -63,7 +84,68 @@ const KnowledgePageDetailSection = () => {
     loadMore: loadMoreItems
   } = useKnowledgeItems(selectedBaseId, currentDirectory?.id ?? null)
   const { deleteItem, deleteItems } = useDeleteKnowledgeItem(selectedBaseId)
-  const { reindexItem, reindexItems } = useReindexKnowledgeItem(selectedBaseId)
+  const { reindexItems } = useReindexKnowledgeItem(selectedBaseId)
+
+  const captureReindexResult = useCallback((result: KnowledgeReindexSubmissionResult): boolean => {
+    if (result.status !== 'split_confirmation_required') return false
+    setReindexPdfSplitError('')
+    setPendingReindexPdfSplit({
+      confirmation: result.confirmation,
+      itemIds: result.itemIds,
+      remainingItemIds: result.remainingItemIds
+    })
+    return true
+  }, [])
+
+  const requestReindexItems = useCallback(
+    async (itemIds: string[]) => {
+      captureReindexResult(await reindexItems(itemIds))
+    },
+    [captureReindexResult, reindexItems]
+  )
+
+  const requestReindexItem = useCallback(
+    async (item: KnowledgeItem) => {
+      await requestReindexItems([item.id])
+    },
+    [requestReindexItems]
+  )
+
+  const handleConfirmReindexPdfSplit = useCallback(() => {
+    if (!pendingReindexPdfSplit || isConfirmingReindexPdfSplit) return
+    setReindexPdfSplitError('')
+    setIsConfirmingReindexPdfSplit(true)
+    void (async () => {
+      const confirmedResult = await reindexItems(
+        pendingReindexPdfSplit.itemIds,
+        pendingReindexPdfSplit.confirmation.token
+      )
+      if (captureReindexResult(confirmedResult)) return
+
+      if (pendingReindexPdfSplit.remainingItemIds.length > 0) {
+        const remainingResult = await reindexItems(pendingReindexPdfSplit.remainingItemIds)
+        if (captureReindexResult(remainingResult)) return
+      }
+      setPendingReindexPdfSplit(null)
+    })()
+      .catch((error) => {
+        setReindexPdfSplitError(formatErrorMessageWithPrefix(error, t('knowledge.data_source.reindex_failed')))
+      })
+      .finally(() => setIsConfirmingReindexPdfSplit(false))
+  }, [captureReindexResult, isConfirmingReindexPdfSplit, pendingReindexPdfSplit, reindexItems, t])
+
+  const handleCancelReindexPdfSplit = useCallback(() => {
+    if (!pendingReindexPdfSplit || isConfirmingReindexPdfSplit) return
+    const token = pendingReindexPdfSplit.confirmation.token
+    setPendingReindexPdfSplit(null)
+    setReindexPdfSplitError('')
+    void discardKnowledgePdfSplitConfirmation(token).catch((error) => {
+      logger.warn('Failed to discard reindex PDF split confirmation', {
+        token,
+        error: error instanceof Error ? error.message : String(error)
+      })
+    })
+  }, [isConfirmingReindexPdfSplit, pendingReindexPdfSplit])
 
   if (!selectedBase) {
     return null
@@ -128,8 +210,8 @@ const KnowledgePageDetailSection = () => {
             onNavigateUp={navigateUp}
             onDelete={deleteItem}
             onDeleteItems={deleteItems}
-            onReindex={reindexItem}
-            onReindexItems={reindexItems}
+            onReindex={requestReindexItem}
+            onReindexItems={requestReindexItems}
           />
         )}
       </div>
@@ -155,6 +237,18 @@ const KnowledgePageDetailSection = () => {
         bodyClassName="px-0 py-0">
         <RecallTestPanel baseId={selectedBaseId} />
       </PageSidePanel>
+
+      <PdfSplitConfirmationDialog
+        state={
+          pendingReindexPdfSplit
+            ? { status: 'ready', confirmation: pendingReindexPdfSplit.confirmation }
+            : { status: 'closed' }
+        }
+        errorMessage={reindexPdfSplitError}
+        isConfirming={isConfirmingReindexPdfSplit}
+        onConfirm={handleConfirmReindexPdfSplit}
+        onCancel={handleCancelReindexPdfSplit}
+      />
     </main>
   )
 }

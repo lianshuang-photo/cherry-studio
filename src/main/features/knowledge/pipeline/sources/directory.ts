@@ -2,15 +2,20 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 
 import { nextFreeKnowledgeRelativePath } from '@main/utils/knowledge'
-import type { DirectoryItemData, FileItemData, KnowledgeItem } from '@shared/data/types/knowledge'
-import { knowledgeSupportedFileExts } from '@shared/utils/file'
+import {
+  type DirectoryItemData,
+  type FileItemData,
+  type KnowledgeItem,
+  KnowledgeRelativePathSchema
+} from '@shared/data/types/knowledge'
+import { knowledgeSupportedFileExts, type PosixRelativeFilePath } from '@shared/utils/file'
 
 import { assertSafeKnowledgeRelativePath, copyFileIntoKnowledgeBaseAt } from '../../pathStorage'
 
 const KNOWLEDGE_SUPPORTED_FILE_EXT_SET = new Set<string>(knowledgeSupportedFileExts)
 
 /** A scanned filesystem entry under a directory owner — only the fields this module reads. */
-interface DirectoryEntryNode {
+export interface DirectoryEntryNode {
   type: 'file' | 'folder'
   /** Absolute path of the entry on disk. */
   externalPath: string
@@ -19,29 +24,40 @@ interface DirectoryEntryNode {
   children?: DirectoryEntryNode[]
 }
 
+export type DirectorySourceManifest = DirectoryEntryNode[]
+
 export type ExpandedDirectoryNode =
   | {
       type: 'directory'
-      data: Pick<DirectoryItemData, 'source'>
+      data: DirectoryItemData
       children: ExpandedDirectoryNode[]
     }
   | {
       type: 'file'
-      data: Pick<FileItemData, 'source' | 'relativePath'>
+      data: FileItemData
     }
 
-async function readDirectoryTree(
+export interface DirectoryPdfSplitPublisher {
+  hasSplit(sourcePath: string): boolean
+  publish(
+    sourcePath: string,
+    relativePrefix: PosixRelativeFilePath,
+    signal: AbortSignal
+  ): Promise<ExpandedDirectoryNode>
+}
+
+export async function readDirectorySourceManifest(
   dirPath: string,
-  signal: AbortSignal,
+  signal?: AbortSignal,
   rootPath: string = dirPath
-): Promise<DirectoryEntryNode[]> {
-  signal.throwIfAborted()
+): Promise<DirectorySourceManifest> {
+  signal?.throwIfAborted()
   const entries = await fs.readdir(dirPath, { withFileTypes: true })
-  signal.throwIfAborted()
+  signal?.throwIfAborted()
   const nodes: DirectoryEntryNode[] = []
 
   for (const entry of entries) {
-    signal.throwIfAborted()
+    signal?.throwIfAborted()
 
     if (entry.name.startsWith('.')) {
       continue
@@ -56,7 +72,7 @@ async function readDirectoryTree(
         type: 'folder',
         treePath,
         externalPath: entryPath,
-        children: await readDirectoryTree(entryPath, signal, rootPath)
+        children: await readDirectorySourceManifest(entryPath, signal, rootPath)
       })
       continue
     }
@@ -73,16 +89,60 @@ async function readDirectoryTree(
   return nodes
 }
 
+export function getSupportedDirectoryManifestPaths(nodes: DirectorySourceManifest): string[] {
+  const paths: string[] = []
+  const visit = (entries: DirectoryEntryNode[]) => {
+    for (const entry of entries) {
+      if (entry.type === 'folder') {
+        visit(entry.children ?? [])
+      } else if (KNOWLEDGE_SUPPORTED_FILE_EXT_SET.has(path.extname(entry.externalPath).toLowerCase())) {
+        paths.push(entry.treePath)
+      }
+    }
+  }
+  visit(nodes)
+  return paths.sort()
+}
+
+export function getDirectoryManifestPdfPaths(nodes: DirectorySourceManifest): string[] {
+  const paths: string[] = []
+  const visit = (entries: DirectoryEntryNode[]) => {
+    for (const entry of entries) {
+      if (entry.type === 'folder') {
+        visit(entry.children ?? [])
+      } else if (path.extname(entry.externalPath).toLowerCase() === '.pdf') {
+        paths.push(entry.externalPath)
+      }
+    }
+  }
+  visit(nodes)
+  return paths
+}
+
 async function expandDirectoryNode(
   baseId: string,
   pathPrefix: string,
   node: DirectoryEntryNode,
   signal: AbortSignal,
-  onFileCopied: () => void
+  onFileCopied: () => void,
+  pdfSplitPublisher: DirectoryPdfSplitPublisher | undefined,
+  pdfSplitRelativePrefixes: Map<string, string>
 ): Promise<ExpandedDirectoryNode | null> {
   if (node.type === 'file') {
     if (!KNOWLEDGE_SUPPORTED_FILE_EXT_SET.has(path.extname(node.externalPath).toLowerCase())) {
       return null
+    }
+
+    const pdfSplitRelativePrefix = pdfSplitRelativePrefixes.get(node.externalPath)
+    if (pdfSplitRelativePrefix && pdfSplitPublisher) {
+      const published = await pdfSplitPublisher.publish(
+        node.externalPath,
+        KnowledgeRelativePathSchema.parse(`${pathPrefix}/${pdfSplitRelativePrefix}`),
+        signal
+      )
+      signal.throwIfAborted()
+      onFileCopied()
+      return published
     }
 
     // Namespace each file under the owner directory's (deduped) basename and keep
@@ -117,7 +177,15 @@ async function expandDirectoryNode(
   const children: ExpandedDirectoryNode[] = []
 
   for (const child of node.children ?? []) {
-    const expandedChild = await expandDirectoryNode(baseId, pathPrefix, child, signal, onFileCopied)
+    const expandedChild = await expandDirectoryNode(
+      baseId,
+      pathPrefix,
+      child,
+      signal,
+      onFileCopied,
+      pdfSplitPublisher,
+      pdfSplitRelativePrefixes
+    )
     if (expandedChild) {
       children.push(expandedChild)
     }
@@ -145,7 +213,10 @@ async function expandDirectoryNode(
  * container's `relativePath` BEFORE any byte is copied, making a mid-expansion crash
  * recoverable (the retry reclaims `raw/<pathPrefix>` from the pinned row).
  */
-export function chooseDirectoryPathPrefix(owner: KnowledgeItem, reservedTopLevelNames: Set<string>): string {
+export function chooseDirectoryPathPrefix(
+  owner: KnowledgeItem,
+  reservedTopLevelNames: Set<string>
+): PosixRelativeFilePath {
   if (owner.type !== 'directory') {
     throw new Error(`Knowledge item '${owner.id}' must be type 'directory', received '${owner.type}'`)
   }
@@ -178,14 +249,17 @@ export async function expandDirectoryOwnerToTree(
   baseId: string,
   pathPrefix: string,
   signal: AbortSignal,
-  onCopyProgress: (percent: number) => void
+  onCopyProgress: (percent: number) => void,
+  pdfSplitPublisher?: DirectoryPdfSplitPublisher,
+  manifest?: DirectorySourceManifest
 ): Promise<ExpandedDirectoryNode[]> {
   if (owner.type !== 'directory') {
     throw new Error(`Knowledge item '${owner.id}' must be type 'directory', received '${owner.type}'`)
   }
 
   const resolvedPath = path.resolve(owner.data.source)
-  const children = await readDirectoryTree(resolvedPath, signal)
+  const children = manifest ?? (await readDirectorySourceManifest(resolvedPath, signal))
+  const pdfSplitRelativePrefixes = choosePdfSplitRelativePrefixes(children, pdfSplitPublisher)
   const expandedChildren: ExpandedDirectoryNode[] = []
   const totalFiles = countSupportedFiles(children)
   let copiedFiles = 0
@@ -198,13 +272,56 @@ export async function expandDirectoryOwnerToTree(
   }
 
   for (const child of children) {
-    const expandedChild = await expandDirectoryNode(baseId, pathPrefix, child, signal, onFileCopied)
+    const expandedChild = await expandDirectoryNode(
+      baseId,
+      pathPrefix,
+      child,
+      signal,
+      onFileCopied,
+      pdfSplitPublisher,
+      pdfSplitRelativePrefixes
+    )
     if (expandedChild) {
       expandedChildren.push(expandedChild)
     }
   }
 
   return expandedChildren
+}
+
+function choosePdfSplitRelativePrefixes(
+  nodes: DirectoryEntryNode[],
+  publisher: DirectoryPdfSplitPublisher | undefined
+): Map<string, string> {
+  const result = new Map<string, string>()
+  if (!publisher) return result
+
+  const reserved = new Set<string>()
+  const stagedFiles: DirectoryEntryNode[] = []
+  const visit = (entries: DirectoryEntryNode[]) => {
+    for (const node of entries) {
+      const subtreePath = node.treePath.replace(/^\/+/, '')
+      if (node.type === 'folder') {
+        reserved.add(subtreePath)
+        visit(node.children ?? [])
+      } else if (publisher.hasSplit(node.externalPath)) {
+        stagedFiles.push(node)
+      } else if (KNOWLEDGE_SUPPORTED_FILE_EXT_SET.has(path.extname(node.externalPath).toLowerCase())) {
+        reserved.add(subtreePath)
+      }
+    }
+  }
+  visit(nodes)
+
+  for (const node of stagedFiles) {
+    const subtreePath = node.treePath.replace(/^\/+/, '')
+    const extension = path.posix.extname(subtreePath)
+    const proposed = subtreePath.slice(0, subtreePath.length - extension.length)
+    const chosen = nextFreeKnowledgeRelativePath(proposed, (candidate) => !reserved.has(candidate), false)
+    reserved.add(chosen)
+    result.set(node.externalPath, chosen)
+  }
+  return result
 }
 
 function countSupportedFiles(nodes: DirectoryEntryNode[]): number {

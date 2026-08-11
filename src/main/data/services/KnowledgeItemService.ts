@@ -13,6 +13,8 @@ import { DataApiErrorFactory } from '@shared/data/api/errors'
 import type { KnowledgeItemListResponse, ListKnowledgeItemsQuery } from '@shared/data/api/schemas/knowledges'
 import {
   type CreateKnowledgeItemDto,
+  type DirectoryItemData,
+  type FileItemData,
   type KnowledgeItem,
   type KnowledgeItemData,
   KnowledgeItemSchema,
@@ -344,6 +346,125 @@ export class KnowledgeItemService {
 
     logger.info('Created active knowledge item', { baseId, id: row.id, type: row.type, status })
     return rowToKnowledgeItem(row)
+  }
+
+  createPdfSplitSubtree(
+    baseId: string,
+    input: {
+      groupId?: string | null
+      data: DirectoryItemData
+      parts: FileItemData[]
+    }
+  ): { parent: KnowledgeItem; parts: KnowledgeItem[] } {
+    const result = application.get('DbService').withWriteTx((tx) => {
+      this.validateGroupOwnerTx(tx, baseId, input.groupId)
+      const [parentRow] = tx
+        .insert(knowledgeItemTable)
+        .values({
+          baseId,
+          groupId: input.groupId ?? null,
+          type: 'directory',
+          data: input.data,
+          status: 'processing',
+          error: null
+        })
+        .returning()
+        .all()
+      if (!parentRow) {
+        throw DataApiErrorFactory.dataInconsistent('KnowledgeItem', 'PDF split parent create result missing')
+      }
+
+      const partRows = input.parts.map((data) => {
+        const [partRow] = tx
+          .insert(knowledgeItemTable)
+          .values({
+            baseId,
+            groupId: parentRow.id,
+            type: 'file',
+            data,
+            status: 'processing',
+            error: null
+          })
+          .returning()
+          .all()
+        if (!partRow) {
+          throw DataApiErrorFactory.dataInconsistent('KnowledgeItem', 'PDF split part create result missing')
+        }
+        return partRow
+      })
+
+      this.reconcileContainersTx(tx, baseId, [parentRow.id, parentRow.groupId])
+      return { parentRow, partRows }
+    })
+
+    logger.info('Created PDF split knowledge subtree', {
+      baseId,
+      parentId: result.parentRow.id,
+      partCount: result.partRows.length
+    })
+    return {
+      parent: rowToKnowledgeItem(result.parentRow),
+      parts: result.partRows.map(rowToKnowledgeItem)
+    }
+  }
+
+  replaceWithPdfSplitSubtree(
+    baseId: string,
+    itemId: string,
+    input: { data: DirectoryItemData; parts: FileItemData[] }
+  ): { parent: KnowledgeItem; parts: KnowledgeItem[] } {
+    const result = application.get('DbService').withWriteTx((tx) => {
+      const [existingRow] = tx
+        .select()
+        .from(knowledgeItemTable)
+        .where(and(eq(knowledgeItemTable.baseId, baseId), eq(knowledgeItemTable.id, itemId)))
+        .limit(1)
+        .all()
+      if (!existingRow) {
+        throw DataApiErrorFactory.notFound('KnowledgeItem', itemId)
+      }
+      if (existingRow.type !== 'file' && existingRow.type !== 'directory') {
+        throw DataApiErrorFactory.validation({
+          type: [`Knowledge item ${itemId} must be a file or directory to publish PDF parts`]
+        })
+      }
+
+      tx.delete(knowledgeItemTable)
+        .where(and(eq(knowledgeItemTable.baseId, baseId), eq(knowledgeItemTable.groupId, itemId)))
+        .run()
+      const [parentRow] = tx
+        .update(knowledgeItemTable)
+        .set({ type: 'directory', data: input.data, status: 'processing', error: null })
+        .where(eq(knowledgeItemTable.id, itemId))
+        .returning()
+        .all()
+      if (!parentRow) {
+        throw DataApiErrorFactory.dataInconsistent('KnowledgeItem', 'PDF split parent update result missing')
+      }
+      const partRows = input.parts.map((data) => {
+        const [partRow] = tx
+          .insert(knowledgeItemTable)
+          .values({ baseId, groupId: itemId, type: 'file', data, status: 'processing', error: null })
+          .returning()
+          .all()
+        if (!partRow) {
+          throw DataApiErrorFactory.dataInconsistent('KnowledgeItem', 'PDF split part create result missing')
+        }
+        return partRow
+      })
+      this.reconcileContainersTx(tx, baseId, [parentRow.id, parentRow.groupId])
+      return { parentRow, partRows }
+    })
+
+    logger.info('Replaced knowledge item with PDF split subtree', {
+      baseId,
+      parentId: itemId,
+      partCount: result.partRows.length
+    })
+    return {
+      parent: rowToKnowledgeItem(result.parentRow),
+      parts: result.partRows.map(rowToKnowledgeItem)
+    }
   }
 
   private validateGroupOwnerTx(db: Pick<DbType, 'select'>, baseId: string, groupId: string | null | undefined): void {

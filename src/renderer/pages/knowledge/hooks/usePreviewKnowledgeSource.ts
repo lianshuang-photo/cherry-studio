@@ -52,11 +52,18 @@ export const usePreviewKnowledgeSource = (
       }
 
       try {
-        if (item.type === 'file' || (item.type === 'url' && item.data.relativePath)) {
+        if (
+          item.type === 'file' ||
+          (item.type === 'url' && item.data.relativePath) ||
+          (item.type === 'directory' && item.data.pdfSplitSource)
+        ) {
           const physicalPath = await ipcApi.request('knowledge.get_file_path', { itemId: item.id })
           if (!isCurrentRequest()) return
           onPreviewFile({
-            fileName: getKnowledgeItemDisplayTitle(item),
+            fileName:
+              item.type === 'directory' && item.data.pdfSplitSource
+                ? item.data.pdfSplitSource.sourceName
+                : getKnowledgeItemDisplayTitle(item),
             filePath: normalizeFilePreviewPath(physicalPath)
           })
           return

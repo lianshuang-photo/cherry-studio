@@ -201,7 +201,7 @@ export const { createReindexSubtreeJobHandler } = await import('../reindexSubtre
 export const NOTE_ITEM_ID = '0198f3f2-7d1a-7abc-8def-123456789abc'
 export const FILE_ITEM_ID = '0198f3f2-7d1a-7abc-8def-123456789abd'
 export const FILE_RELATIVE_PATH = 'source.pdf' as PosixRelativeFilePath
-export const PROCESSED_RELATIVE_PATH = 'source.md'
+export const PROCESSED_RELATIVE_PATH = 'source.md' as PosixRelativeFilePath
 type KnowledgeJobSnapshotInput = Pick<JobSnapshot, 'type' | 'input'> & Partial<JobSnapshot>
 
 export function createBase(overrides: Partial<KnowledgeBase> = {}): KnowledgeBase {

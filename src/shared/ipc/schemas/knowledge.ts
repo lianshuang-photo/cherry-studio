@@ -7,6 +7,8 @@ import {
   KnowledgeAddItemsResultSchema,
   KnowledgeBaseSchema,
   KnowledgeItemChunkSchema,
+  KnowledgePdfSplitConfirmationSchema,
+  KnowledgeReindexItemsResultSchema,
   KnowledgeSearchResultSchema,
   RestoreKnowledgeBaseResultSchema,
   RestoreKnowledgeBaseSchema
@@ -58,12 +60,24 @@ export const knowledgeRequestSchemas = {
       items: z.array(KnowledgeAddItemInputSchema).min(1).max(KNOWLEDGE_RUNTIME_ITEMS_MAX),
       // Omitted by internal callers (defaults to 'rename'); an interactive add sends
       // 'detect' first, then 'rename'/'replace' once the user resolves a conflict.
-      conflictStrategy: KnowledgeAddConflictStrategySchema.optional()
+      conflictStrategy: KnowledgeAddConflictStrategySchema.optional(),
+      splitConfirmationToken: z.string().trim().min(1).optional()
     }),
     output: KnowledgeAddItemsResultSchema
   }),
+  'knowledge.preflight_pdf_split_add': defineRoute({
+    input: z.strictObject({ baseId: baseIdSchema, path: AbsoluteFilePathSchema }),
+    output: KnowledgePdfSplitConfirmationSchema.nullable()
+  }),
   'knowledge.delete_items': defineRoute({ input: itemIdsInputSchema, output: z.void() }),
-  'knowledge.reindex_items': defineRoute({ input: itemIdsInputSchema, output: z.void() }),
+  'knowledge.reindex_items': defineRoute({
+    input: itemIdsInputSchema.extend({ splitConfirmationToken: z.string().trim().min(1).optional() }),
+    output: KnowledgeReindexItemsResultSchema
+  }),
+  'knowledge.discard_split_confirmation': defineRoute({
+    input: z.strictObject({ token: z.string().trim().min(1) }),
+    output: z.void()
+  }),
   // First-time embedding setup on a BM25-only base that already has items: sets the
   // model/dimensions in place and backfills embeddings, instead of restoring into a
   // new base. Switching an already-configured model still goes through restore_base.

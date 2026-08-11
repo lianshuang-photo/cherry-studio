@@ -3,7 +3,7 @@ import { cn } from '@cherrystudio/ui/lib/utils'
 import { CommandContextMenu, type CommandContextMenuExtraItem } from '@renderer/components/command'
 import { useSharedCacheValue } from '@renderer/data/hooks/useCache'
 import KnowledgeRowActionsMenu from '@renderer/pages/knowledge/components/KnowledgeRowActionsMenu'
-import { getKnowledgeItemFailureReason } from '@renderer/pages/knowledge/utils/error'
+import { getKnowledgeItemFailureReason, getKnowledgeItemFailureSummary } from '@renderer/pages/knowledge/utils/error'
 import { toast } from '@renderer/services/toast'
 import { formatErrorMessageWithPrefix } from '@renderer/utils/error'
 import { formatRelativeTime } from '@renderer/utils/time'
@@ -20,6 +20,7 @@ import { toKnowledgeItemRowViewModel } from './utils/selectors'
 export interface KnowledgeItemRowProps {
   item: KnowledgeItem
   selected: boolean
+  selectable?: boolean
   onToggleSelect: (next: boolean) => void
   onClick: () => void
   onDelete: () => void | Promise<unknown>
@@ -72,14 +73,14 @@ const KnowledgeItemStatusBadge = ({
   const content = (
     <span
       className={cn(
-        'inline-flex shrink-0 items-center gap-1 text-xs',
+        'inline-flex min-w-0 max-w-full items-center gap-1 text-xs',
         failureReason && 'cursor-help',
         status.textClassName
       )}
       tabIndex={failureReason ? 0 : undefined}
       aria-label={failureReason ?? undefined}>
       {icon}
-      <span>{statusText}</span>
+      <span className="min-w-0 truncate">{statusText}</span>
     </span>
   )
 
@@ -102,6 +103,7 @@ const KnowledgeItemStatusBadge = ({
 const KnowledgeItemRow = ({
   item,
   selected,
+  selectable = true,
   onToggleSelect,
   onClick,
   onDelete,
@@ -118,6 +120,8 @@ const KnowledgeItemRow = ({
   // `failed` carries a reason code in `error` (e.g. a migrated folder whose vectors could not
   // be migrated); surface it as the badge tooltip.
   const failureReason = item.status === 'failed' ? getKnowledgeItemFailureReason(item, t) : null
+  const failureSummary = failureReason ? getKnowledgeItemFailureSummary(failureReason, t) : null
+  const isManagedPdfPart = item.type === 'file' && Boolean(item.data.pdfPart)
   const canReindex = item.status === 'completed' || item.status === 'failed'
   const canViewChunks = item.status === 'completed'
   // Every row's primary click views its original content in-app: files/URLs delegate
@@ -174,22 +178,24 @@ const KnowledgeItemRow = ({
       })
     }
 
-    items.push({ type: 'separator' })
-    items.push({
-      type: 'item',
-      id: 'delete',
-      label: t('knowledge.data_source.actions.delete'),
-      icon: <Trash2 className="size-3.5" />,
-      destructive: true,
-      onSelect: () => {
-        void Promise.resolve(onDelete()).catch((error) => {
-          toast.error(formatErrorMessageWithPrefix(error, t('knowledge.data_source.delete_failed')))
-        })
-      }
-    })
+    if (!isManagedPdfPart) {
+      items.push({ type: 'separator' })
+      items.push({
+        type: 'item',
+        id: 'delete',
+        label: t('knowledge.data_source.actions.delete'),
+        icon: <Trash2 className="size-3.5" />,
+        destructive: true,
+        onSelect: () => {
+          void Promise.resolve(onDelete()).catch((error) => {
+            toast.error(formatErrorMessageWithPrefix(error, t('knowledge.data_source.delete_failed')))
+          })
+        }
+      })
+    }
 
     return items
-  }, [canReindex, canViewChunks, item.type, onDelete, onPreviewSource, onReindex, onViewChunks, t])
+  }, [canReindex, canViewChunks, isManagedPdfPart, item.type, onDelete, onPreviewSource, onReindex, onViewChunks, t])
 
   // Keyboard equivalent for the row's primary click action. Only handle keys raised on the row
   // itself so Enter/Space on the checkbox (which bubble up) don't also open chunks.
@@ -223,11 +229,12 @@ const KnowledgeItemRow = ({
         <div role="gridcell" className="flex items-center self-stretch" onClick={(event) => event.stopPropagation()}>
           {/* The label fills the whole cell so a click anywhere in the checkbox column toggles
               selection; the cell's stopPropagation keeps that click from also opening the row. */}
-          <label className="flex size-full cursor-pointer items-center">
+          <label className={cn('flex size-full items-center', selectable && 'cursor-pointer')}>
             <Checkbox
               size="sm"
               className={knowledgeDataSourceCheckboxClassName}
               aria-label={t('knowledge.data_source.table.select_row')}
+              disabled={!selectable}
               checked={selected}
               onCheckedChange={(next) => onToggleSelect(next === true)}
             />
@@ -244,7 +251,7 @@ const KnowledgeItemRow = ({
         <div role="gridcell" className="truncate text-muted-foreground text-xs">
           {typeLabel}
         </div>
-        <div role="gridcell">
+        <div role="gridcell" className="min-w-0">
           <KnowledgeItemStatusBadge
             status={status}
             failureReason={failureReason}
@@ -253,7 +260,7 @@ const KnowledgeItemRow = ({
                 <KnowledgeDirectoryCopyStatus itemId={item.id} />
               ) : (
                 <>
-                  {t(status.labelKey)}
+                  {failureSummary ?? t(status.labelKey)}
                   {item.status === 'embedding' ? <KnowledgeItemEmbeddingProgress itemId={item.id} /> : null}
                 </>
               )

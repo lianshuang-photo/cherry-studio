@@ -155,6 +155,10 @@ export class KnowledgeQueryService {
       return getKnowledgeBaseFilePath(item.baseId, item.data.relativePath)
     }
 
+    if (item.type === 'directory' && item.data.pdfSplitSource) {
+      return getKnowledgeBaseFilePath(item.baseId, item.data.pdfSplitSource.relativePath)
+    }
+
     throw DataApiErrorFactory.invalidOperation(
       'getFilePath',
       `Knowledge item '${itemId}' must be a file or URL to preview its source`

@@ -161,6 +161,34 @@ describe('usePreviewKnowledgeSource', () => {
     expect(mockOpenExternal).not.toHaveBeenCalled()
   })
 
+  it('previews the private original for a split PDF directory', async () => {
+    mockIpcRequest.mockResolvedValue('/knowledge/base-1/raw/example/.source/example.pdf')
+    const { result } = renderHook(() => usePreviewKnowledgeSource(previewFileMock))
+    const directory = createDirectoryItem({ id: 'directory-1', source: '/Users/me/example.pdf' })
+    const item = {
+      ...directory,
+      data: {
+        ...directory.data,
+        pdfSplitSource: {
+          relativePath: 'raw/example/.source/example.pdf' as PosixRelativeFilePath,
+          sourceName: 'example.pdf',
+          totalPages: 31
+        }
+      }
+    }
+
+    await act(async () => {
+      await result.current.previewSource(item)
+    })
+
+    expect(mockIpcRequest).toHaveBeenCalledWith('knowledge.get_file_path', { itemId: 'directory-1' })
+    expect(previewFileMock).toHaveBeenCalledWith({
+      fileName: 'example.pdf',
+      filePath: '/knowledge/base-1/raw/example/.source/example.pdf'
+    })
+    expect(mockOpenPath).not.toHaveBeenCalled()
+  })
+
   it('resolves captured URL snapshots into embedded preview targets', async () => {
     mockIpcRequest.mockResolvedValue('/knowledge/base-1/raw/drafts/../Product Docs.md')
     const { result } = renderHook(() => usePreviewKnowledgeSource(previewFileMock))

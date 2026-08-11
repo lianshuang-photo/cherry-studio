@@ -107,6 +107,15 @@ describe('builtin tool contracts', () => {
     expect(kbManageInputSchema.safeParse({ baseId: 'kb-1', action: 'add', type: 'note', content: 'hi' }).success).toBe(
       true
     )
+    expect(
+      kbManageInputSchema.safeParse({
+        baseId: 'kb-1',
+        action: 'add',
+        type: 'file',
+        path: '/docs/report.pdf',
+        splitConfirmationToken: 'split-token'
+      }).success
+    ).toBe(true)
   })
 
   it('lets kb_read omit mode-specific fields', () => {

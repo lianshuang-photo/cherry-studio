@@ -23,7 +23,7 @@ export type CreateKnowledgeBaseInput = Pick<
 >
 export type RestoreKnowledgeBaseInput = Pick<
   RestoreKnowledgeBaseDto,
-  'sourceBaseId' | 'name' | 'embeddingModelId' | 'dimensions'
+  'sourceBaseId' | 'name' | 'embeddingModelId' | 'dimensions' | 'splitConfirmationToken'
 >
 
 export const useKnowledgeBases = (options: { enabled?: boolean; revalidateOnFocus?: boolean } = {}) => {
@@ -170,16 +170,19 @@ export const useRestoreKnowledgeBase = () => {
           sourceBaseId,
           name,
           embeddingModelId,
-          dimensions
+          dimensions,
+          ...(input.splitConfirmationToken ? { splitConfirmationToken: input.splitConfirmationToken.trim() } : {})
         })
 
-        try {
-          await invalidateCache('/knowledge-bases')
-        } catch (invalidateError) {
-          logger.error('Failed to refresh knowledge base list after restore', normalizeError(invalidateError), {
-            sourceBaseId,
-            restoredBaseId: result.base.id
-          })
+        if (result.status === 'restored') {
+          try {
+            await invalidateCache('/knowledge-bases')
+          } catch (invalidateError) {
+            logger.error('Failed to refresh knowledge base list after restore', normalizeError(invalidateError), {
+              sourceBaseId,
+              restoredBaseId: result.base.id
+            })
+          }
         }
 
         setIsRestoring(false)

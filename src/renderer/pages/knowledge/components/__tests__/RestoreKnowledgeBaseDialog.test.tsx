@@ -1,7 +1,8 @@
 import { toast } from '@renderer/services/toast'
 import { LOCAL_EMBEDDING_DIMENSIONS, LOCAL_EMBEDDING_UNIQUE_MODEL_ID } from '@shared/data/presets/localEmbedding'
-import type { KnowledgeBase } from '@shared/data/types/knowledge'
+import type { KnowledgeBase, RestoreKnowledgeBaseResult } from '@shared/data/types/knowledge'
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { type ReactNode, useState } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -11,9 +12,15 @@ const mockUseModels = vi.fn()
 const mockUseProviders = vi.fn()
 const mockSettingsNavigate = vi.fn()
 // embedMany (via useEmbeddingDimensions) goes through ipcApi.request('ai.embedding.embed_many', …) now.
-const { mockEmbedMany } = vi.hoisted(() => ({ mockEmbedMany: vi.fn() }))
+const { mockDiscardSplitConfirmation, mockEmbedMany } = vi.hoisted(() => ({
+  mockDiscardSplitConfirmation: vi.fn(),
+  mockEmbedMany: vi.fn()
+}))
 vi.mock('@renderer/ipc', () => ({
-  ipcApi: { request: (_route: string, input: unknown) => mockEmbedMany(input) }
+  ipcApi: {
+    request: (route: string, input: unknown) =>
+      route === 'knowledge.discard_split_confirmation' ? mockDiscardSplitConfirmation(input) : mockEmbedMany(input)
+  }
 }))
 
 vi.mock('@renderer/hooks/useModel', () => ({
@@ -153,6 +160,11 @@ vi.mock('react-i18next', () => ({
           'knowledge.restore.failed_to_restore': '知识库重建失败',
           'knowledge.restore.submit': '重建',
           'knowledge.restore.title': '重建知识库',
+          'knowledge.data_source.pdf_split.confirm': '确认拆分',
+          'knowledge.data_source.pdf_split.description': '确认拆分计划',
+          'knowledge.data_source.pdf_split.preparing_description': '正在准备拆分计划',
+          'knowledge.data_source.pdf_split.preparing_title': '正在检查 PDF',
+          'knowledge.data_source.pdf_split.title': '拆分 PDF',
           'message.error.get_embedding_dimensions': '获取嵌入维度失败'
         }) as Record<string, string>
       )[key] ?? key
@@ -179,6 +191,22 @@ const createKnowledgeBase = (overrides: Partial<KnowledgeBase> = {}): KnowledgeB
   ...overrides
 })
 
+const createSplitConfirmation = () => ({
+  token: 'restore-split-token',
+  expiresAt: '2026-08-10T08:10:00.000Z',
+  processorId: 'doc2x',
+  files: [
+    {
+      sourceName: 'report.pdf',
+      pageCount: 31,
+      sourceBytes: 1024,
+      parts: [{ pageStart: 1, pageEnd: 31, bytes: 512 }]
+    }
+  ],
+  totalTasks: 1,
+  estimatedDiskBytes: 4096
+})
+
 describe('RestoreKnowledgeBaseDialog', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -189,6 +217,7 @@ describe('RestoreKnowledgeBaseDialog', () => {
       providers: [{ id: 'openai', isEnabled: true }]
     })
     mockEmbedMany.mockResolvedValue({ embeddings: [new Array(1536).fill(0)] })
+    mockDiscardSplitConfirmation.mockResolvedValue(undefined)
   })
 
   it('renders the localized backup name and submits restoreBase with the selected embedding model', async () => {
@@ -200,7 +229,9 @@ describe('RestoreKnowledgeBaseDialog', () => {
       dimensions: 1536,
       embeddingModelId: 'openai::text-embedding-3-small'
     })
-    const restoreBase = vi.fn().mockResolvedValue({ base: restoredBase, skippedMissingSourceCount: 0 })
+    const restoreBase = vi
+      .fn()
+      .mockResolvedValue({ status: 'restored', base: restoredBase, skippedMissingSourceCount: 0 })
     const onOpenChange = vi.fn()
     const onRestored = vi.fn()
 
@@ -248,7 +279,9 @@ describe('RestoreKnowledgeBaseDialog', () => {
       dimensions: 1536,
       embeddingModelId: 'openai::text-embedding-3-small'
     })
-    const restoreBase = vi.fn().mockResolvedValue({ base: restoredBase, skippedMissingSourceCount: 2 })
+    const restoreBase = vi
+      .fn()
+      .mockResolvedValue({ status: 'restored', base: restoredBase, skippedMissingSourceCount: 2 })
     const onRestored = vi.fn()
 
     render(
@@ -272,8 +305,105 @@ describe('RestoreKnowledgeBaseDialog', () => {
     expect(onRestored).toHaveBeenCalledWith(restoredBase)
   })
 
+  it('confirms the prepared PDF split plan and restores with the same token', async () => {
+    const user = userEvent.setup()
+    const confirmation = createSplitConfirmation()
+    const restoredBase = createKnowledgeBase({ id: 'restored-base', status: 'completed', error: null })
+    let resolveRestore!: (result: RestoreKnowledgeBaseResult) => void
+    const confirmedRestore = new Promise<RestoreKnowledgeBaseResult>((resolve) => {
+      resolveRestore = resolve
+    })
+    const restoreBase = vi
+      .fn()
+      .mockResolvedValueOnce({ status: 'split_confirmation_required', confirmation })
+      .mockReturnValueOnce(confirmedRestore)
+    const onRestored = vi.fn()
+
+    render(
+      <RestoreKnowledgeBaseDialog
+        open
+        base={createKnowledgeBase()}
+        isRestoring={false}
+        restoreBase={restoreBase}
+        onOpenChange={vi.fn()}
+        onRestored={onRestored}
+      />
+    )
+
+    await user.click(screen.getByRole('button', { name: '重建' }))
+    await screen.findByRole('heading', { name: '拆分 PDF' })
+    const confirmButton = screen.getByRole('button', { name: '确认拆分' })
+    await user.click(confirmButton)
+    await user.click(confirmButton)
+
+    await waitFor(() =>
+      expect(restoreBase).toHaveBeenLastCalledWith({
+        sourceBaseId: 'source-base',
+        name: 'Legacy KB_副本',
+        embeddingModelId: null,
+        dimensions: null,
+        splitConfirmationToken: confirmation.token
+      })
+    )
+    expect(restoreBase).toHaveBeenCalledTimes(2)
+    resolveRestore({ status: 'restored', base: restoredBase, skippedMissingSourceCount: 0 })
+    await waitFor(() => expect(onRestored).toHaveBeenCalledWith(restoredBase))
+  })
+
+  it('discards PDF staging on cancellation and returns to the restore form', async () => {
+    const confirmation = createSplitConfirmation()
+    const restoreBase = vi.fn().mockResolvedValueOnce({ status: 'split_confirmation_required', confirmation })
+
+    render(
+      <RestoreKnowledgeBaseDialog
+        open
+        base={createKnowledgeBase()}
+        isRestoring={false}
+        restoreBase={restoreBase}
+        onOpenChange={vi.fn()}
+        onRestored={vi.fn()}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: '重建' }))
+    await screen.findByRole('heading', { name: '拆分 PDF' })
+    fireEvent.click(screen.getByRole('button', { name: '取消' }))
+
+    await waitFor(() => expect(mockDiscardSplitConfirmation).toHaveBeenCalledWith({ token: confirmation.token }))
+    expect(screen.getByRole('heading', { name: '重建知识库' })).toBeInTheDocument()
+    expect(screen.getByLabelText('名称')).toHaveValue('Legacy KB_副本')
+  })
+
+  it('keeps confirmation errors inside the PDF split dialog', async () => {
+    const confirmation = createSplitConfirmation()
+    const restoreBase = vi
+      .fn()
+      .mockResolvedValueOnce({ status: 'split_confirmation_required', confirmation })
+      .mockRejectedValueOnce(new Error('confirmation expired'))
+
+    render(
+      <RestoreKnowledgeBaseDialog
+        open
+        base={createKnowledgeBase()}
+        isRestoring={false}
+        restoreBase={restoreBase}
+        onOpenChange={vi.fn()}
+        onRestored={vi.fn()}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: '重建' }))
+    await screen.findByRole('heading', { name: '拆分 PDF' })
+    fireEvent.click(screen.getByRole('button', { name: '确认拆分' }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('confirmation expired')
+    expect(screen.getByRole('heading', { name: '拆分 PDF' })).toBeInTheDocument()
+  })
+
   it('does not submit when the name is missing', async () => {
-    const restoreBase = vi.fn().mockResolvedValue({ base: createKnowledgeBase(), skippedMissingSourceCount: 0 })
+    const restoreBase = vi
+      .fn()
+      .mockResolvedValue({ status: 'restored', base: createKnowledgeBase(), skippedMissingSourceCount: 0 })
 
     render(
       <RestoreKnowledgeBaseDialog
@@ -302,7 +432,9 @@ describe('RestoreKnowledgeBaseDialog', () => {
       embeddingModelId: null,
       dimensions: null
     })
-    const restoreBase = vi.fn().mockResolvedValue({ base: restoredBase, skippedMissingSourceCount: 0 })
+    const restoreBase = vi
+      .fn()
+      .mockResolvedValue({ status: 'restored', base: restoredBase, skippedMissingSourceCount: 0 })
 
     render(
       <RestoreKnowledgeBaseDialog
@@ -339,7 +471,9 @@ describe('RestoreKnowledgeBaseDialog', () => {
       embeddingModelId: LOCAL_EMBEDDING_UNIQUE_MODEL_ID,
       dimensions: LOCAL_EMBEDDING_DIMENSIONS
     })
-    const restoreBase = vi.fn().mockResolvedValue({ base: restoredBase, skippedMissingSourceCount: 0 })
+    const restoreBase = vi
+      .fn()
+      .mockResolvedValue({ status: 'restored', base: restoredBase, skippedMissingSourceCount: 0 })
 
     render(
       <RestoreKnowledgeBaseDialog
@@ -375,7 +509,9 @@ describe('RestoreKnowledgeBaseDialog', () => {
       dimensions: 2048,
       embeddingModelId: 'openai::text-embedding-3-small'
     })
-    const restoreBase = vi.fn().mockResolvedValue({ base: restoredBase, skippedMissingSourceCount: 0 })
+    const restoreBase = vi
+      .fn()
+      .mockResolvedValue({ status: 'restored', base: restoredBase, skippedMissingSourceCount: 0 })
 
     render(
       <RestoreKnowledgeBaseDialog
@@ -433,7 +569,9 @@ describe('RestoreKnowledgeBaseDialog', () => {
 
   it('shows an error and keeps the dialog open when embedding dimensions cannot be fetched', async () => {
     mockEmbedMany.mockRejectedValueOnce(new Error('probe failed'))
-    const restoreBase = vi.fn().mockResolvedValue({ base: createKnowledgeBase(), skippedMissingSourceCount: 0 })
+    const restoreBase = vi
+      .fn()
+      .mockResolvedValue({ status: 'restored', base: createKnowledgeBase(), skippedMissingSourceCount: 0 })
     const onOpenChange = vi.fn()
     const onRestored = vi.fn()
 
@@ -459,7 +597,9 @@ describe('RestoreKnowledgeBaseDialog', () => {
   })
 
   it('closes the dialog on cancel without restoring', () => {
-    const restoreBase = vi.fn().mockResolvedValue({ base: createKnowledgeBase(), skippedMissingSourceCount: 0 })
+    const restoreBase = vi
+      .fn()
+      .mockResolvedValue({ status: 'restored', base: createKnowledgeBase(), skippedMissingSourceCount: 0 })
     const onOpenChange = vi.fn()
 
     render(
@@ -485,7 +625,9 @@ describe('RestoreKnowledgeBaseDialog', () => {
       pendingNavigation = callback
       return 1
     })
-    const restoreBase = vi.fn().mockResolvedValue({ base: createKnowledgeBase(), skippedMissingSourceCount: 0 })
+    const restoreBase = vi
+      .fn()
+      .mockResolvedValue({ status: 'restored', base: createKnowledgeBase(), skippedMissingSourceCount: 0 })
 
     const Host = () => {
       const [open, setOpen] = useState(true)

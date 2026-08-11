@@ -177,6 +177,7 @@ function createConfig(): FileProcessorMerged {
         feature: 'document_to_markdown',
         inputs: ['document'],
         output: 'markdown',
+        maxInputBytes: 50 * 1024 ** 2,
         apiHost: 'https://api.mistral.ai',
         modelId: 'mistral-ocr-latest'
       }

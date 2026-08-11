@@ -260,12 +260,14 @@ export class KnowledgeConceptService {
    * the whole batch.
    */
   async deleteConcepts(baseId: string, conceptIds: string[]): Promise<KnowledgeConceptMutationResult> {
-    const { found, notFound } = await this.resolveConceptItemIds(baseId, conceptIds, 'deleteConcepts')
+    const { found, notFound } = await this.resolveConceptItems(baseId, conceptIds, 'deleteConcepts')
     if (found.length > 0) {
-      await this.ingestionService.deleteItems(
-        baseId,
-        found.map((entry) => entry.itemId)
-      )
+      const deletionTargetIds = [
+        ...new Set(
+          found.map(({ item }) => (item.type === 'file' && item.data.pdfPart ? (item.groupId ?? item.id) : item.id))
+        )
+      ]
+      await this.ingestionService.deleteItems(baseId, deletionTargetIds)
     }
     return { applied: found.map((entry) => entry.conceptId), notFound }
   }
@@ -277,12 +279,19 @@ export class KnowledgeConceptService {
    * base is reported in `notFound` rather than failing the whole batch.
    */
   async refreshConcepts(baseId: string, conceptIds: string[]): Promise<KnowledgeConceptMutationResult> {
-    const { found, notFound } = await this.resolveConceptItemIds(baseId, conceptIds, 'refreshConcepts')
+    const { found, notFound } = await this.resolveConceptItems(baseId, conceptIds, 'refreshConcepts')
     if (found.length > 0) {
-      await this.ingestionService.reindexItems(
+      const result = await this.ingestionService.reindexItems(
         baseId,
-        found.map((entry) => entry.itemId)
+        found.map((entry) => entry.item.id)
       )
+      if (result.status === 'split_confirmation_required') {
+        await this.ingestionService.discardSplitConfirmation(result.confirmation.token)
+        throw DataApiErrorFactory.invalidOperation(
+          'refreshConcepts',
+          'Large PDF sources must be rebuilt from the data source list so their split plan can be confirmed'
+        )
+      }
     }
     return { applied: found.map((entry) => entry.conceptId), notFound }
   }
@@ -348,7 +357,7 @@ export class KnowledgeConceptService {
   }
 
   /**
-   * Resolve a batch of Concept IDs to their knowledge item ids for a Concept
+   * Resolve a batch of Concept IDs to their knowledge items for a Concept
    * ID-addressed mutation. Mirrors {@link resolveConcept}'s identity boundary —
    * each relative path is looked up in this base's index store, then re-validated
    * against the visible knowledge_item (same base, completed) — but resolves many
@@ -356,16 +365,16 @@ export class KnowledgeConceptService {
    * instead of throwing, so one bad id does not sink the batch. Duplicate ids in
    * the input are collapsed to a single resolution.
    */
-  private async resolveConceptItemIds(
+  private async resolveConceptItems(
     baseId: string,
     conceptIds: string[],
     operation: string
-  ): Promise<{ found: Array<{ conceptId: string; itemId: string }>; notFound: string[] }> {
+  ): Promise<{ found: Array<{ conceptId: string; item: KnowledgeItem }>; notFound: string[] }> {
     const base = knowledgeBaseService.getById(baseId)
     const vectorStoreService = application.get('KnowledgeVectorStoreService')
     const store = vectorStoreService.getIndexStore(base)
 
-    const found: Array<{ conceptId: string; itemId: string }> = []
+    const found: Array<{ conceptId: string; item: KnowledgeItem }> = []
     const notFound: string[] = []
     const seen = new Set<string>()
 
@@ -379,7 +388,7 @@ export class KnowledgeConceptService {
       // Identity re-check: the resolved material id must still be a visible item in this base.
       const item = ref ? loadVisibleItems(baseId, [ref.materialId]).get(ref.materialId) : undefined
       if (ref && item) {
-        found.push({ conceptId, itemId: ref.materialId })
+        found.push({ conceptId, item })
       } else {
         notFound.push(conceptId)
       }

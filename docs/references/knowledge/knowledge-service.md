@@ -208,16 +208,22 @@ Knowledge files are owned by the Knowledge workflow under its raw/vector storage
 Base restore creates a new knowledge base from an existing base:
 
 ```text
-restore-base(sourceBaseId, embeddingModelId, dimensions)
+restore-base(sourceBaseId, embeddingModelId, dimensions, splitConfirmationToken?)
  -> data service loads the source base
  -> data service loads source root items
+ -> PDF preflight runs against those source inputs
+ -> if splitting is required: return split_confirmation_required without creating a target base
+ -> on confirmation: validate and consume the same staged split bundle
  -> orchestration creates a new base with source config plus the requested embedding model/dimensions
  -> orchestration adds each root item to the new base
+ -> return restored with the new base and skipped-source count
 ```
 
 `dimensions` must already be resolved for the selected `embeddingModelId` before calling `restore-base`. Automatic flows should fill it from AI Core dimension detection; manual flows accept the user-provided value and rely on the caller to confirm it matches the model. The restore backend only validates that `dimensions` is a positive integer and uses it to create the new vector store; it does not perform a second model probe. If the value does not match the model's actual embedding output size, the mismatch is expected to surface during the subsequent indexing/write-vector phase.
 
 The source base is preserved. Restore is allowed for failed bases and completed bases, including completed bases whose `embeddingModelId` and `dimensions` are unchanged. Same-config restore is a valid clone/rebuild workflow, not rejected as a no-op.
+
+An oversized direct PDF or a directory containing one must be explicitly approved before the target base exists. The confirmation token owns immutable copies of every split source plus any captured directory manifests; confirmation cancellation discards that staging. Confirmed restore publishes the retained original and all parts from the staged bytes, while directory membership or PDF fingerprint changes invalidate the plan rather than admitting new work.
 
 If one or more root items cannot be accepted into the restored base, orchestration best-effort deletes the new base and rethrows an `invalidOperation`. Later background indexing failures are recorded on item status instead of this synchronous restore error.
 

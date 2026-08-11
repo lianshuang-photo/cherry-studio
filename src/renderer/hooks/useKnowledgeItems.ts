@@ -8,7 +8,8 @@ import {
   type KnowledgeAddItemInput,
   type KnowledgeAddItemsResult,
   type KnowledgeItem,
-  type KnowledgeItemStatus
+  type KnowledgeItemStatus,
+  type KnowledgeReindexItemsResult
 } from '@shared/data/types/knowledge'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
@@ -39,6 +40,17 @@ const normalizeKnowledgeError = (error: unknown): Error => {
 const addLogger = loggerService.withContext('useAddKnowledgeItems')
 const deleteLogger = loggerService.withContext('useDeleteKnowledgeItem')
 const reindexLogger = loggerService.withContext('useReindexKnowledgeItem')
+
+export type KnowledgeReindexSubmissionResult =
+  | Extract<KnowledgeReindexItemsResult, { status: 'scheduled' }>
+  | (Extract<KnowledgeReindexItemsResult, { status: 'split_confirmation_required' }> & {
+      itemIds: string[]
+      remainingItemIds: string[]
+    })
+
+export const discardKnowledgePdfSplitConfirmation = async (token: string): Promise<void> => {
+  await ipcApi.request('knowledge.discard_split_confirmation', { token })
+}
 
 type KnowledgeItemsLogger = typeof addLogger
 
@@ -147,7 +159,8 @@ export const useAddKnowledgeItems = (baseId: string) => {
   const submit = useCallback(
     async (
       items: KnowledgeAddItemInput[],
-      conflictStrategy?: KnowledgeAddConflictStrategy
+      conflictStrategy?: KnowledgeAddConflictStrategy,
+      splitConfirmationToken?: string
     ): Promise<KnowledgeAddItemsResult> => {
       if (!baseId) {
         return Promise.reject(new Error('Knowledge base id is required'))
@@ -163,7 +176,12 @@ export const useAddKnowledgeItems = (baseId: string) => {
       let submitError: Error | undefined
       let result: KnowledgeAddItemsResult | undefined
       try {
-        result = await ipcApi.request('knowledge.add_items', { baseId, items, conflictStrategy })
+        result = await ipcApi.request('knowledge.add_items', {
+          baseId,
+          items,
+          ...(conflictStrategy ? { conflictStrategy } : {}),
+          ...(splitConfirmationToken ? { splitConfirmationToken } : {})
+        })
       } catch (error) {
         submitError = normalizeKnowledgeError(error)
 
@@ -271,7 +289,7 @@ export const useReindexKnowledgeItem = (baseId: string) => {
   const invalidateCache = useInvalidateCache()
 
   const reindexItems = useCallback(
-    async (itemIds: string[]): Promise<void> => {
+    async (itemIds: string[], splitConfirmationToken?: string): Promise<KnowledgeReindexSubmissionResult> => {
       if (!baseId) {
         return Promise.reject(new Error('Knowledge base id is required'))
       }
@@ -280,9 +298,25 @@ export const useReindexKnowledgeItem = (baseId: string) => {
       setIsReindexing(true)
 
       let reindexError: Error | undefined
+      let result: KnowledgeReindexSubmissionResult = { status: 'scheduled' }
+      let scheduledAny = false
       try {
-        for (const batchItemIds of chunkKnowledgeItemIds(itemIds)) {
-          await ipcApi.request('knowledge.reindex_items', { baseId, itemIds: batchItemIds })
+        const batches = chunkKnowledgeItemIds(itemIds)
+        for (const [index, batchItemIds] of batches.entries()) {
+          const batchResult = await ipcApi.request('knowledge.reindex_items', {
+            baseId,
+            itemIds: batchItemIds,
+            ...(index === 0 && splitConfirmationToken ? { splitConfirmationToken } : {})
+          })
+          if (batchResult.status === 'split_confirmation_required') {
+            result = {
+              ...batchResult,
+              itemIds: batchItemIds,
+              remainingItemIds: batches.slice(index + 1).flat()
+            }
+            break
+          }
+          scheduledAny = true
         }
       } catch (error) {
         reindexError = normalizeKnowledgeError(error)
@@ -294,16 +328,18 @@ export const useReindexKnowledgeItem = (baseId: string) => {
 
         setError(reindexError)
       } finally {
-        await refreshKnowledgeItemsCaches(
-          invalidateCache,
-          baseId,
-          reindexLogger,
-          'Failed to refresh knowledge source list after reindex',
-          {
+        if (reindexError || scheduledAny) {
+          await refreshKnowledgeItemsCaches(
+            invalidateCache,
             baseId,
-            itemIds
-          }
-        )
+            reindexLogger,
+            'Failed to refresh knowledge source list after reindex',
+            {
+              baseId,
+              itemIds
+            }
+          )
+        }
 
         setIsReindexing(false)
       }
@@ -311,11 +347,16 @@ export const useReindexKnowledgeItem = (baseId: string) => {
       if (reindexError) {
         throw reindexError
       }
+
+      return result
     },
     [baseId, invalidateCache]
   )
 
-  const reindexItem = useCallback((item: KnowledgeItem): Promise<void> => reindexItems([item.id]), [reindexItems])
+  const reindexItem = useCallback(
+    (item: KnowledgeItem): Promise<KnowledgeReindexSubmissionResult> => reindexItems([item.id]),
+    [reindexItems]
+  )
 
   return {
     reindexItems,

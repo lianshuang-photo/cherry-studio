@@ -10,6 +10,7 @@ import { ACTIVE_JOB_STATUSES, type JobSnapshot } from '@shared/data/api/schemas/
 import { KNOWLEDGE_ITEM_ERROR_INDEXING_INTERRUPTED, type KnowledgeItemStatus } from '@shared/data/types/knowledge'
 
 import type { KnowledgeItemScheduler } from '../ingestion/KnowledgeIngestionService'
+import { pdfSplitService } from '../ingestion/pdfSplit/PdfSplitService'
 import { canKnowledgeItemRebuildSource, isContainerKnowledgeItem } from '../items'
 import { deleteKnowledgeItemFilesBestEffort } from '../pathStorage'
 import { deleteKnowledgeItemVectors } from '../pipeline/vectorstore/vectorCleanup'
@@ -66,6 +67,9 @@ export function createReindexSubtreeJobHandler(
         const rootItems = subtreeResult.items
 
         const selectedRoots = rootItems.filter((item) => rootItemIds.includes(item.id))
+        for (const root of selectedRoots) {
+          await pdfSplitService.assertDirectoryBundleCurrent(root.id, ctx.signal)
+        }
         // Admission (assertSubtreesCanReindex) already rejected roots whose source is gone, but the
         // source can vanish between admission and acquiring this lock. Re-check right before the delete:
         // a root that can no longer rebuild keeps its existing vectors (stays completed/searchable)
@@ -133,7 +137,13 @@ export function createReindexSubtreeJobHandler(
       try {
         for (const item of resetResult.roots) {
           ctx.signal.throwIfAborted()
-          await ingestionService.scheduleItem(toKnowledgeBaseId(baseId), toKnowledgeItemId(item.id), ctx.jobId)
+          if (item.type === 'file') {
+            await ingestionService.scheduleItem(toKnowledgeBaseId(baseId), toKnowledgeItemId(item.id), ctx.jobId, {
+              forceFileProcessing: true
+            })
+          } else {
+            await ingestionService.scheduleItem(toKnowledgeBaseId(baseId), toKnowledgeItemId(item.id), ctx.jobId)
+          }
           completedSchedulingRootIds.add(item.id)
         }
       } catch (error) {

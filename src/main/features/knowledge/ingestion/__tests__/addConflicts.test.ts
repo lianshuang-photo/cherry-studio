@@ -60,6 +60,30 @@ describe('resolveKnowledgeAddConflicts', () => {
     expect(result.keptInputs).toEqual(inputs)
   })
 
+  it('treats a synthetic split root as the original PDF for second-add detect and replace', () => {
+    const inputs = [fileInput('/incoming/report.pdf')]
+    const existing = [
+      existingItem('split-root', {
+        type: 'directory',
+        data: {
+          source: '/old/report.pdf',
+          relativePath: 'report' as PosixRelativeFilePath,
+          pdfSplitSource: {
+            relativePath: 'report/.source/report.pdf' as PosixRelativeFilePath,
+            sourceName: 'report.pdf',
+            totalPages: 31
+          }
+        }
+      })
+    ]
+
+    const result = resolveKnowledgeAddConflicts(inputs, existing)
+
+    expect(result.conflicts).toEqual([{ type: 'file', title: 'report.pdf' }])
+    expect(result.conflictingExistingRootIds).toEqual(['split-root'])
+    expect(result.keptInputs).toEqual(inputs)
+  })
+
   it('does not collide across types (file vs note with the same name)', () => {
     const inputs = [fileInput('/a/report')]
     const existing = [existingItem('e1', { type: 'note', data: { source: 'note', content: 'report' } })]

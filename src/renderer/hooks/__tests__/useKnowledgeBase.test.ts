@@ -350,7 +350,7 @@ describe('useRestoreKnowledgeBase', () => {
       embeddingModelId: 'openai::text-embedding-3-small',
       dimensions: 1024
     })
-    mockIpcRequest.mockResolvedValueOnce({ base: restoredBase, skippedMissingSourceCount: 0 })
+    mockIpcRequest.mockResolvedValueOnce({ status: 'restored', base: restoredBase, skippedMissingSourceCount: 0 })
 
     const { result } = renderHook(() => useRestoreKnowledgeBase())
     let restored: RestoreKnowledgeBaseResult | undefined
@@ -371,7 +371,7 @@ describe('useRestoreKnowledgeBase', () => {
       dimensions: 1024
     })
     expect(mockInvalidateCache).toHaveBeenCalledWith('/knowledge-bases')
-    expect(restored).toEqual({ base: restoredBase, skippedMissingSourceCount: 0 })
+    expect(restored).toEqual({ status: 'restored', base: restoredBase, skippedMissingSourceCount: 0 })
     expect(result.current.isRestoring).toBe(false)
     expect(result.current.restoreError).toBeUndefined()
   })
@@ -383,7 +383,7 @@ describe('useRestoreKnowledgeBase', () => {
       embeddingModelId: null,
       dimensions: null
     })
-    mockIpcRequest.mockResolvedValueOnce({ base: restoredBase, skippedMissingSourceCount: 0 })
+    mockIpcRequest.mockResolvedValueOnce({ status: 'restored', base: restoredBase, skippedMissingSourceCount: 0 })
 
     const { result } = renderHook(() => useRestoreKnowledgeBase())
 
@@ -403,6 +403,47 @@ describe('useRestoreKnowledgeBase', () => {
       dimensions: null
     })
     expect(mockInvalidateCache).toHaveBeenCalledWith('/knowledge-bases')
+  })
+
+  it('returns split confirmation without invalidating caches and forwards the token on confirmation', async () => {
+    const confirmation = {
+      token: 'restore-split-token',
+      expiresAt: '2026-08-10T08:10:00.000Z',
+      processorId: 'doc2x',
+      files: [
+        {
+          sourceName: 'report.pdf',
+          pageCount: 31,
+          sourceBytes: 1024,
+          parts: [{ pageStart: 1, pageEnd: 31, bytes: 512 }]
+        }
+      ],
+      totalTasks: 1,
+      estimatedDiskBytes: 4096
+    }
+    mockIpcRequest.mockResolvedValueOnce({ status: 'split_confirmation_required', confirmation })
+    const { result } = renderHook(() => useRestoreKnowledgeBase())
+
+    let restoreResult: RestoreKnowledgeBaseResult | undefined
+    await act(async () => {
+      restoreResult = await result.current.restoreBase({
+        sourceBaseId: 'source-base',
+        name: 'Restored',
+        embeddingModelId: null,
+        dimensions: null,
+        splitConfirmationToken: confirmation.token
+      })
+    })
+
+    expect(mockIpcRequest).toHaveBeenCalledWith('knowledge.restore_base', {
+      sourceBaseId: 'source-base',
+      name: 'Restored',
+      embeddingModelId: null,
+      dimensions: null,
+      splitConfirmationToken: confirmation.token
+    })
+    expect(restoreResult).toEqual({ status: 'split_confirmation_required', confirmation })
+    expect(mockInvalidateCache).not.toHaveBeenCalled()
   })
 
   it('keeps restore rejected when runtime IPC fails without refreshing the list', async () => {

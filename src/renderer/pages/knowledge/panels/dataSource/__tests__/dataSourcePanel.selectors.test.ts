@@ -1,7 +1,8 @@
 import type { PosixRelativeFilePath } from '@shared/utils/file'
+import { FileText } from 'lucide-react'
 import { describe, expect, it } from 'vitest'
 
-import { getItemStatus, getItemTitle } from '../utils/selectors'
+import { getItemStatus, getItemTitle, toKnowledgeItemRowViewModel } from '../utils/selectors'
 import { createDirectoryItem, createFileItem, createNoteItem, createUrlItem } from './testUtils'
 
 describe('dataSourcePanel.selectors', () => {
@@ -84,6 +85,25 @@ describe('dataSourcePanel.selectors', () => {
       labelKey: 'knowledge.data_source.status.pending',
       textClassName: 'text-zinc-500',
       icon: 'loader'
+    })
+  })
+
+  it('presents a synthetic PDF root as a PDF file row', () => {
+    const item = createDirectoryItem({ id: 'split-root', source: '/tmp/report.pdf' })
+    item.data = {
+      source: '/tmp/report.pdf',
+      relativePath: 'report_2' as PosixRelativeFilePath,
+      pdfSplitSource: {
+        relativePath: 'report_2/.source/report.pdf' as PosixRelativeFilePath,
+        sourceName: 'report.pdf',
+        totalPages: 31
+      }
+    }
+
+    expect(toKnowledgeItemRowViewModel(item, 'en')).toMatchObject({
+      title: 'report_2.pdf',
+      suffix: 'pdf',
+      icon: { icon: FileText }
     })
   })
 })

@@ -11,6 +11,7 @@ import { isDataApiNotFoundError } from '@shared/data/api/errors'
 import type { KnowledgeItem } from '@shared/data/types/knowledge'
 
 import type { KnowledgeItemScheduler } from '../ingestion/KnowledgeIngestionService'
+import { pdfSplitService } from '../ingestion/pdfSplit/PdfSplitService'
 import { markUnscheduledKnowledgeItemsFailed } from '../ingestion/statusCleanup'
 import { purgeKnowledgeSubtreeWithinLock } from '../ingestion/subtreePurge'
 import { getKnowledgeBaseFilePath } from '../pathStorage'
@@ -54,6 +55,7 @@ export function createPrepareRootJobHandler(
         return
       }
 
+      await pdfSplitService.assertDirectoryBundleCurrent(itemId, ctx.signal)
       cacheService.deleteShared(progressKey)
       // Drop stale expanded leaves before scanning so first attempts and retries stay idempotent.
       await deletePreviousLeafExpansion(baseId, itemId, knowledgeLockManager)
@@ -72,6 +74,7 @@ export function createPrepareRootJobHandler(
         })
         // Child indexing is scheduled after expansion succeeds so partial scans do not enqueue stale leaves.
         await enqueueLeafItems(ctx, leafItems, ingestionService)
+        await pdfSplitService.discardDirectorySplits(itemId)
       } finally {
         const percent = cacheService.getShared(progressKey)
         if (percent != null) {
@@ -81,6 +84,12 @@ export function createPrepareRootJobHandler(
     },
 
     async onSettled(event) {
+      await pdfSplitService.discardDirectorySplits(event.input.itemId).catch((error) => {
+        logger.warn('Failed to clean staged PDF parts after prepare-root settled', {
+          itemId: event.input.itemId,
+          error: error instanceof Error ? error.message : String(error)
+        })
+      })
       await markKnowledgeItemFailedOnSettled(event, logger, 'Failed to flip knowledge container to failed in onSettled')
     }
   }
@@ -134,7 +143,7 @@ async function deletePreviousLeafExpansion(
     const result = resolveLiveKnowledgeItem(itemId)
     if ('item' in result && result.item.type === 'directory') {
       const prefix = result.item.data.relativePath
-      if (prefix) {
+      if (prefix && !result.item.data.pdfSplitSource) {
         await removeDir(getKnowledgeBaseFilePath(baseId, prefix))
       }
     }

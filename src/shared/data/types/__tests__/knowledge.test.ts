@@ -6,10 +6,15 @@ import {
   FileItemDataSchema,
   getKnowledgeItemConflictKey,
   getKnowledgeItemDisplayTitle,
+  getKnowledgeItemDisplayType,
   getKnowledgeNoteFirstLine,
   getKnowledgePathBasename,
+  KnowledgeAddItemsResultSchema,
+  KnowledgeItemDataSchema,
   KnowledgeRelativePathSchema,
-  KnowledgeSearchResultSchema
+  KnowledgeSearchResultSchema,
+  RestoreKnowledgeBaseResultSchema,
+  RestoreKnowledgeBaseSchema
 } from '../knowledge'
 
 describe('KnowledgeRelativePathSchema', () => {
@@ -106,6 +111,113 @@ describe('KnowledgeSearchResultSchema', () => {
   })
 })
 
+describe('PDF split knowledge contracts', () => {
+  it('accepts synthetic parent and managed part metadata', () => {
+    expect(
+      KnowledgeItemDataSchema.parse({
+        source: '/docs/example.pdf',
+        relativePath: 'example',
+        pdfSplitSource: {
+          relativePath: 'example/.source/example.pdf',
+          sourceName: 'example.pdf',
+          totalPages: 31
+        }
+      })
+    ).toMatchObject({ pdfSplitSource: { totalPages: 31 } })
+
+    expect(
+      KnowledgeItemDataSchema.parse({
+        source: 'example_0001-0030.pdf',
+        relativePath: 'example/example_0001-0030.pdf',
+        pdfPart: { partIndex: 1, pageStart: 1, pageEnd: 30 }
+      })
+    ).toMatchObject({ pdfPart: { pageStart: 1, pageEnd: 30 } })
+  })
+
+  it('accepts an aggregate split confirmation result', () => {
+    expect(
+      KnowledgeAddItemsResultSchema.parse({
+        status: 'split_confirmation_required',
+        confirmation: {
+          token: 'token',
+          expiresAt: '2026-08-10T09:00:00.000Z',
+          processorId: 'doc2x',
+          files: [
+            {
+              sourceName: 'example.pdf',
+              pageCount: 31,
+              sourceBytes: 1024,
+              parts: [
+                { pageStart: 1, pageEnd: 30, bytes: 700 },
+                { pageStart: 31, pageEnd: 31, bytes: 300 }
+              ]
+            }
+          ],
+          totalTasks: 2,
+          estimatedDiskBytes: 4096
+        }
+      }).status
+    ).toBe('split_confirmation_required')
+  })
+
+  it('accepts restore confirmation tokens and both restore result branches', () => {
+    const confirmation = {
+      token: 'token',
+      expiresAt: '2026-08-10T09:00:00.000Z',
+      processorId: 'doc2x',
+      files: [
+        {
+          sourceName: 'example.pdf',
+          pageCount: 31,
+          sourceBytes: 1024,
+          parts: [{ pageStart: 1, pageEnd: 31, bytes: 1024 }]
+        }
+      ],
+      totalTasks: 1,
+      estimatedDiskBytes: 4096
+    }
+    expect(
+      RestoreKnowledgeBaseSchema.parse({
+        sourceBaseId: '11111111-1111-4111-8111-111111111111',
+        name: 'Restored',
+        dimensions: null,
+        embeddingModelId: null,
+        splitConfirmationToken: 'token'
+      }).splitConfirmationToken
+    ).toBe('token')
+    expect(
+      RestoreKnowledgeBaseResultSchema.parse({
+        status: 'restored',
+        base: {
+          id: '22222222-2222-4222-8222-222222222222',
+          name: 'Restored',
+          groupId: null,
+          dimensions: null,
+          embeddingModelId: null,
+          status: 'completed',
+          error: null,
+          chunkSize: 1024,
+          chunkOverlap: 200,
+          chunkStrategy: 'structured',
+          chunkSeparator: '\n\n',
+          rerankModelId: null,
+          fileProcessorId: null,
+          documentCount: 10,
+          createdAt: '2026-08-10T09:00:00.000Z',
+          updatedAt: '2026-08-10T09:00:00.000Z'
+        },
+        skippedMissingSourceCount: 0
+      }).status
+    ).toBe('restored')
+    expect(
+      RestoreKnowledgeBaseResultSchema.parse({
+        status: 'split_confirmation_required',
+        confirmation
+      }).status
+    ).toBe('split_confirmation_required')
+  })
+})
+
 describe('getKnowledgePathBasename', () => {
   it('returns the last path segment for posix and windows separators', () => {
     expect(getKnowledgePathBasename('/Users/me/docs/report.pdf')).toBe('report.pdf')
@@ -140,6 +252,19 @@ describe('getKnowledgeItemDisplayTitle', () => {
       getKnowledgeItemDisplayTitle({ type: 'directory', data: { source: '/a/b/docs', relativePath: 'docs_2' } })
     ).toBe('docs_2')
     expect(getKnowledgeItemDisplayTitle({ type: 'directory', data: { source: '/a/b/docs' } })).toBe('docs')
+  })
+
+  it('shows a synthetic PDF root as its deduped prefix plus original extension', () => {
+    const item = {
+      type: 'directory' as const,
+      data: {
+        source: '/a/report.pdf',
+        relativePath: 'report_2',
+        pdfSplitSource: { sourceName: 'report.pdf' }
+      }
+    }
+    expect(getKnowledgeItemDisplayTitle(item)).toBe('report_2.pdf')
+    expect(getKnowledgeItemDisplayType(item)).toBe('file')
   })
 
   it('prefers the captured snapshot name for note items, then the title, else the first content line', () => {
@@ -184,6 +309,19 @@ describe('getKnowledgeItemConflictKey', () => {
     expect(
       getKnowledgeItemConflictKey({ type: 'directory', data: { source: '/a/docs', relativePath: 'docs_2' } })
     ).toBe('docs_2')
+  })
+
+  it('keys a synthetic PDF root like the file name it represents', () => {
+    expect(
+      getKnowledgeItemConflictKey({
+        type: 'directory',
+        data: {
+          source: '/a/report.pdf',
+          relativePath: 'report',
+          pdfSplitSource: { sourceName: 'report.pdf' }
+        }
+      })
+    ).toBe('report.pdf')
   })
 
   it('keys note off the same name it displays, so replace cannot purge a differently-titled note', () => {

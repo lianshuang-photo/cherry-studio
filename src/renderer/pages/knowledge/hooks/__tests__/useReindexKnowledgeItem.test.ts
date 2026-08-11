@@ -25,7 +25,7 @@ describe('useReindexKnowledgeItem', () => {
     loggerErrorSpy = vi.spyOn(mockRendererLoggerService, 'error').mockImplementation(() => {})
     mockUseInvalidateCache.mockReturnValue(mockInvalidateCache)
     mockInvalidateCache.mockResolvedValue(undefined)
-    mockIpcRequest.mockResolvedValue(undefined)
+    mockIpcRequest.mockResolvedValue({ status: 'scheduled' })
   })
 
   it('reindexes one knowledge item through orchestration IPC and refreshes the list', async () => {
@@ -33,7 +33,7 @@ describe('useReindexKnowledgeItem', () => {
     const { result } = renderHook(() => useReindexKnowledgeItem('base-1'))
 
     await act(async () => {
-      await expect(result.current.reindexItem(item)).resolves.toBeUndefined()
+      await expect(result.current.reindexItem(item)).resolves.toEqual({ status: 'scheduled' })
     })
 
     expect(mockIpcRequest).toHaveBeenCalledWith('knowledge.reindex_items', { baseId: 'base-1', itemIds: ['note-1'] })
@@ -47,7 +47,7 @@ describe('useReindexKnowledgeItem', () => {
     const { result } = renderHook(() => useReindexKnowledgeItem('base-1'))
 
     await act(async () => {
-      await expect(result.current.reindexItems(['note-1', 'note-2'])).resolves.toBeUndefined()
+      await expect(result.current.reindexItems(['note-1', 'note-2'])).resolves.toEqual({ status: 'scheduled' })
     })
 
     expect(mockIpcRequest).toHaveBeenCalledTimes(1)
@@ -64,7 +64,7 @@ describe('useReindexKnowledgeItem', () => {
     const { result } = renderHook(() => useReindexKnowledgeItem('base-1'))
 
     await act(async () => {
-      await expect(result.current.reindexItems(itemIds)).resolves.toBeUndefined()
+      await expect(result.current.reindexItems(itemIds)).resolves.toEqual({ status: 'scheduled' })
     })
 
     expect(mockIpcRequest).toHaveBeenCalledTimes(2)
@@ -78,6 +78,53 @@ describe('useReindexKnowledgeItem', () => {
     })
     expect(mockInvalidateCache).toHaveBeenCalledTimes(1)
     expect(mockIpcRequest.mock.invocationCallOrder[1]).toBeLessThan(mockInvalidateCache.mock.invocationCallOrder[0])
+  })
+
+  it('returns the exact confirmation batch and remaining ids without refreshing', async () => {
+    const itemIds = Array.from({ length: 101 }, (_, index) => `note-${index + 1}`)
+    const confirmation = {
+      token: 'split-token',
+      expiresAt: '2026-08-10T08:10:00.000Z',
+      processorId: 'doc2x',
+      files: [
+        {
+          sourceName: 'report.pdf',
+          pageCount: 31,
+          sourceBytes: 1024,
+          parts: [{ pageStart: 1, pageEnd: 31, bytes: 1024 }]
+        }
+      ],
+      totalTasks: 1,
+      estimatedDiskBytes: 1024
+    }
+    mockIpcRequest.mockResolvedValueOnce({ status: 'split_confirmation_required', confirmation })
+    const { result } = renderHook(() => useReindexKnowledgeItem('base-1'))
+
+    await act(async () => {
+      await expect(result.current.reindexItems(itemIds)).resolves.toEqual({
+        status: 'split_confirmation_required',
+        confirmation,
+        itemIds: itemIds.slice(0, 100),
+        remainingItemIds: itemIds.slice(100)
+      })
+    })
+
+    expect(mockIpcRequest).toHaveBeenCalledTimes(1)
+    expect(mockInvalidateCache).not.toHaveBeenCalled()
+  })
+
+  it('sends the confirmation token when retrying its reindex batch', async () => {
+    const { result } = renderHook(() => useReindexKnowledgeItem('base-1'))
+
+    await act(async () => {
+      await expect(result.current.reindexItems(['note-1'], 'split-token')).resolves.toEqual({ status: 'scheduled' })
+    })
+
+    expect(mockIpcRequest).toHaveBeenCalledWith('knowledge.reindex_items', {
+      baseId: 'base-1',
+      itemIds: ['note-1'],
+      splitConfirmationToken: 'split-token'
+    })
   })
 
   it('keeps reindex rejected, refreshes items, and exposes inline error when orchestration rejects', async () => {

@@ -16,6 +16,11 @@ type KnowledgeErrorTranslator = (
     | 'knowledge.error.indexing_interrupted'
 ) => string
 
+type KnowledgeFailureSummaryTranslator = (
+  key: 'knowledge.data_source.status.provider_timeout' | 'knowledge.data_source.status.size_exceeded',
+  options?: { limit: string }
+) => string
+
 /** Localized copy for a known base error code. Exhaustive over `KnowledgeBaseErrorCode`. */
 const translateKnowledgeBaseErrorCode = (code: KnowledgeBaseErrorCode, t: KnowledgeErrorTranslator): string => {
   switch (code) {
@@ -63,6 +68,19 @@ export const getKnowledgeItemFailureReason = (item: Pick<KnowledgeItem, 'error'>
   }
 
   return item.error
+}
+
+export const getKnowledgeItemFailureSummary = (reason: string, t: KnowledgeFailureSummaryTranslator): string => {
+  const sizeLimit = reason.match(/(?:smaller than|max(?:imum)?)[^0-9]*(\d+(?:\.\d+)?\s*(?:MB|GB))/i)?.[1]
+  if (sizeLimit) {
+    return t('knowledge.data_source.status.size_exceeded', { limit: sizeLimit.replace(/\s+/g, ' ') })
+  }
+  if (/timed?\s*out|timeout/i.test(reason)) {
+    return t('knowledge.data_source.status.provider_timeout')
+  }
+
+  const detail = reason.split(':').at(-1)?.trim() || reason
+  return detail.length <= 40 ? detail : `${detail.slice(0, 37)}...`
 }
 
 export const normalizeKnowledgeError = (error: unknown): Error => {

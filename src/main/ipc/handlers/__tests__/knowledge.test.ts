@@ -1,6 +1,7 @@
 import { DataApiErrorFactory, ErrorCode } from '@shared/data/api/errors'
 import { IpcError } from '@shared/ipc/errors/IpcError'
 import { knowledgeErrorCodes } from '@shared/ipc/errors/knowledge'
+import type { AbsoluteFilePath } from '@shared/types/file'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const { appGetMock } = vi.hoisted(() => ({ appGetMock: vi.fn() }))
@@ -13,6 +14,7 @@ const knowledgeService = {
   restoreBase: vi.fn(),
   deleteBase: vi.fn(),
   addItems: vi.fn(),
+  preflightPdfSplitAdd: vi.fn(),
   deleteItems: vi.fn(),
   reindexItems: vi.fn(),
   enableEmbeddingModel: vi.fn(),
@@ -84,6 +86,19 @@ describe('knowledgeHandlers', () => {
 
     expect(knowledgeService.addItems).toHaveBeenCalledWith('base-1', items, 'detect')
     expect(result).toBe(addResult)
+  })
+
+  it('preflight_pdf_split_add forwards the base and absolute path', async () => {
+    const confirmation = { token: 'split-token' }
+    knowledgeService.preflightPdfSplitAdd.mockResolvedValue(confirmation)
+
+    const result = await knowledgeHandlers['knowledge.preflight_pdf_split_add'](
+      { baseId: 'base-1', path: '/docs/report.pdf' as AbsoluteFilePath },
+      ctx
+    )
+
+    expect(knowledgeService.preflightPdfSplitAdd).toHaveBeenCalledWith('base-1', '/docs/report.pdf')
+    expect(result).toBe(confirmation)
   })
 
   it('delete_items forwards baseId and itemIds', async () => {

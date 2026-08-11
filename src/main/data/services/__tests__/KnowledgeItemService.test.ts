@@ -96,6 +96,82 @@ describe('KnowledgeItemService', () => {
     }
   }
 
+  describe('PDF split subtrees', () => {
+    const parentData = {
+      source: '/docs/report.pdf',
+      relativePath: 'report' as PosixRelativeFilePath,
+      pdfSplitSource: {
+        relativePath: 'report/.source/report.pdf' as PosixRelativeFilePath,
+        sourceName: 'report.pdf',
+        totalPages: 31
+      }
+    }
+    const parts = [
+      {
+        source: 'report_0001-0030.pdf',
+        relativePath: 'report/report_0001-0030.pdf' as PosixRelativeFilePath,
+        pdfPart: { partIndex: 1, pageStart: 1, pageEnd: 30 }
+      },
+      {
+        source: 'report_0031-0031.pdf',
+        relativePath: 'report/report_0031-0031.pdf' as PosixRelativeFilePath,
+        pdfPart: { partIndex: 2, pageStart: 31, pageEnd: 31 }
+      }
+    ]
+
+    it('creates the synthetic parent and all managed parts in one transaction', () => {
+      const result = service.createPdfSplitSubtree(KNOWLEDGE_BASE_ID, { data: parentData, parts })
+
+      expect(result.parent).toMatchObject({
+        baseId: KNOWLEDGE_BASE_ID,
+        groupId: null,
+        type: 'directory',
+        data: parentData,
+        status: 'processing'
+      })
+      expect(result.parts).toHaveLength(2)
+      expect(result.parts[0]).toMatchObject({
+        groupId: result.parent.id,
+        type: 'file',
+        data: parts[0],
+        status: 'processing'
+      })
+    })
+
+    it('preserves the existing item id and group when converting a PDF file', async () => {
+      await seedItem({
+        id: FILE_A_ID,
+        type: 'file',
+        data: { source: '/docs/report.pdf', relativePath: 'report.pdf' as PosixRelativeFilePath },
+        status: 'completed'
+      })
+
+      const result = service.replaceWithPdfSplitSubtree(KNOWLEDGE_BASE_ID, FILE_A_ID, {
+        data: parentData,
+        parts
+      })
+
+      expect(result.parent).toMatchObject({ id: FILE_A_ID, groupId: null, type: 'directory', data: parentData })
+      expect(result.parts.every((part) => part.groupId === FILE_A_ID)).toBe(true)
+      expect(service.getById(FILE_A_ID)).toMatchObject({ id: FILE_A_ID, type: 'directory' })
+    })
+
+    it('rolls back parent and part inserts when container reconciliation fails', () => {
+      const before = service.getItemsByBaseId(KNOWLEDGE_BASE_ID).length
+      vi.spyOn(
+        service as unknown as { reconcileContainersTx: () => void },
+        'reconcileContainersTx'
+      ).mockImplementationOnce(() => {
+        throw new Error('reconcile boom')
+      })
+
+      expect(() => service.createPdfSplitSubtree(KNOWLEDGE_BASE_ID, { data: parentData, parts })).toThrow(
+        'reconcile boom'
+      )
+      expect(service.getItemsByBaseId(KNOWLEDGE_BASE_ID)).toHaveLength(before)
+    })
+  })
+
   describe('list', () => {
     it('returns items for a knowledge base', async () => {
       await seedItem()

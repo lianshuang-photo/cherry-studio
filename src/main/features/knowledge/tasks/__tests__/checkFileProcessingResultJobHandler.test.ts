@@ -107,7 +107,8 @@ describe('check-file-processing-result job handler', () => {
       pollRound: 3,
       firstScheduledAt,
       parentJobId: 'job-1',
-      processedRelativePath: PROCESSED_RELATIVE_PATH
+      processedRelativePath: PROCESSED_RELATIVE_PATH,
+      delayMs: 5_000
     })
     expect(ingestionService.scheduleIndexing).not.toHaveBeenCalled()
     expect(ctx.reportProgress).toHaveBeenCalledWith(0, { stage: 'waiting', pollRound: 3 })
@@ -134,7 +135,8 @@ describe('check-file-processing-result job handler', () => {
       pollRound: 3,
       firstScheduledAt,
       parentJobId: 'reindex-job',
-      processedRelativePath: PROCESSED_RELATIVE_PATH
+      processedRelativePath: PROCESSED_RELATIVE_PATH,
+      delayMs: 5_000
     })
   })
 
@@ -167,7 +169,7 @@ describe('check-file-processing-result job handler', () => {
     })
   })
 
-  it('marks the item failed when file processing exceeds the wait limit', async () => {
+  it('keeps polling a running provider job without applying a queue-age timeout', async () => {
     const handler = createCheckFileProcessingResultJobHandler(knowledgeLockManager as never, ingestionService)
     knowledgeItemGetByIdMock.mockReturnValue(createFileItem())
     getJobMock.mockResolvedValue(createFileProcessingJobSnapshot({ status: 'running' }))
@@ -180,12 +182,15 @@ describe('check-file-processing-result job handler', () => {
     )
     await handler.execute(ctx)
 
-    expect(knowledgeItemUpdateStatusMock).toHaveBeenCalledWith(FILE_ITEM_ID, 'failed', {
-      error: 'File processing job fp-job-1 did not finish within 30 minutes'
+    expect(ingestionService.scheduleFileProcessingCheck).toHaveBeenCalledWith('kb-1', FILE_ITEM_ID, 'fp-job-1', {
+      pollRound: 361,
+      firstScheduledAt: expect.any(Number),
+      parentJobId: 'job-1',
+      processedRelativePath: PROCESSED_RELATIVE_PATH,
+      delayMs: 5_000
     })
-    expect(cancelMock).toHaveBeenCalledWith('fp-job-1', 'knowledge-file-processing-timeout')
-    expect(ingestionService.scheduleFileProcessingCheck).not.toHaveBeenCalled()
-    expect(ctx.reportProgress).toHaveBeenCalledWith(100, { stage: 'failed' })
+    expect(knowledgeItemUpdateStatusMock).not.toHaveBeenCalled()
+    expect(cancelMock).not.toHaveBeenCalled()
   })
 
   it('stores the processed artifact relative path and schedules indexing on completion', async () => {

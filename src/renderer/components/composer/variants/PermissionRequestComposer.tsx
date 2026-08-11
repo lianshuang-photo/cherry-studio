@@ -7,16 +7,18 @@ import { ToolArgsTable } from '@renderer/components/chat/messages/tools/shared/A
 import { ToolDisclosure, type ToolDisclosureItem } from '@renderer/components/chat/messages/tools/shared/ToolDisclosure'
 import type { ToolResponseLike } from '@renderer/components/chat/messages/tools/toolResponse'
 import type { MessageToolApprovalInput } from '@renderer/components/chat/messages/types'
+import PdfSplitFileSummary from '@renderer/components/PdfSplitFileSummary'
 import Scrollbar from '@renderer/components/Scrollbar'
 import { toast } from '@renderer/services/toast'
 import type { McpToolResponse, NormalToolResponse } from '@renderer/types/mcpTool'
 import { cn } from '@renderer/utils/style'
-import { ArrowRight } from 'lucide-react'
+import { ArrowRight, LoaderCircle, RefreshCw } from 'lucide-react'
 import { useCallback, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import type { ComposerOverride } from '../ComposerContext'
 import type { PermissionRequestComposerRequest } from './permissionRequestComposerRequest'
+import { useKnowledgePdfSplitApproval } from './useKnowledgePdfSplitApproval'
 
 export type { PermissionRequestComposerRequest } from './permissionRequestComposerRequest'
 export { findLatestPendingPermissionRequest } from './permissionRequestComposerRequest'
@@ -125,7 +127,42 @@ function McpPermissionPreview({ toolResponse }: { toolResponse: McpToolResponse 
   )
 }
 
-function PermissionPreview({ toolResponse }: { toolResponse: ToolResponseLike }) {
+function PermissionPreview({
+  toolResponse,
+  pdfSplitApproval
+}: {
+  toolResponse: ToolResponseLike
+  pdfSplitApproval: ReturnType<typeof useKnowledgePdfSplitApproval>
+}) {
+  const { t } = useTranslation()
+
+  if (pdfSplitApproval.isApplicable) {
+    if (pdfSplitApproval.state.status === 'loading') {
+      return (
+        <div className="flex items-center gap-2 px-3 py-3 text-muted-foreground text-sm">
+          <LoaderCircle className="size-4 animate-spin" />
+          {t('agent.toolPermission.pdfSplit.preparing')}
+        </div>
+      )
+    }
+    if (pdfSplitApproval.state.status === 'error') {
+      return (
+        <div className="space-y-2 px-3 py-3">
+          <p role="alert" className="text-destructive text-sm">
+            {pdfSplitApproval.state.message}
+          </p>
+          <Button type="button" variant="outline" size="sm" onClick={pdfSplitApproval.retry}>
+            <RefreshCw className="size-3.5" />
+            {t('agent.toolPermission.pdfSplit.retry')}
+          </Button>
+        </div>
+      )
+    }
+    if (pdfSplitApproval.state.status === 'ready' && pdfSplitApproval.state.confirmation) {
+      return <PdfSplitFileSummary confirmation={pdfSplitApproval.state.confirmation} className="space-y-2 px-3 py-3" />
+    }
+  }
+
   if (isMcpToolResponse(toolResponse)) {
     return <McpPermissionPreview toolResponse={toolResponse} />
   }
@@ -204,6 +241,7 @@ function PermissionOption({
 export default function PermissionRequestComposer({ request, onRespond, className }: PermissionRequestComposerProps) {
   const { t } = useTranslation()
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const pdfSplitApproval = useKnowledgePdfSplitApproval(request)
   const subtitle = getPermissionRequestSubtitle(request)
   const ToolIcon = getToolGroupIcon(request.toolResponse.tool, request.toolResponse.arguments)
   const toolTitle = getToolGroupSemanticTitle(request.toolResponse, 'waiting', t)
@@ -213,6 +251,7 @@ export default function PermissionRequestComposer({ request, onRespond, classNam
       setIsSubmitting(true)
       try {
         await onRespond(input)
+        return true
       } catch (error) {
         logger.error('Failed to send permission response', error as Error, {
           action,
@@ -220,6 +259,7 @@ export default function PermissionRequestComposer({ request, onRespond, classNam
         })
         toast.error(t('agent.toolPermission.error.sendFailed'))
         setIsSubmitting(false)
+        return false
       }
     },
     [onRespond, request.approvalId, t]
@@ -227,17 +267,22 @@ export default function PermissionRequestComposer({ request, onRespond, classNam
 
   const approve = useCallback(async () => {
     if (isSubmitting) return
-    await respond(
+    const claim = pdfSplitApproval.claim()
+    const sent = await respond(
       {
         match: request.match,
-        approved: true
+        approved: true,
+        ...(claim.updatedInput ? { updatedInput: claim.updatedInput } : {})
       },
       'approve'
     )
-  }, [isSubmitting, request.match, respond])
+    if (!sent) claim.restore()
+  }, [isSubmitting, pdfSplitApproval, request.match, respond])
 
   const deny = useCallback(async () => {
     if (isSubmitting) return
+    setIsSubmitting(true)
+    await pdfSplitApproval.discard()
     await respond(
       {
         match: request.match,
@@ -246,7 +291,7 @@ export default function PermissionRequestComposer({ request, onRespond, classNam
       },
       'deny'
     )
-  }, [isSubmitting, request.match, respond, t])
+  }, [isSubmitting, pdfSplitApproval, request.match, respond, t])
 
   return (
     <div
@@ -275,7 +320,7 @@ export default function PermissionRequestComposer({ request, onRespond, classNam
         </div>
 
         <div className="mt-2 overflow-hidden rounded-[12px] bg-muted dark:bg-muted/30" data-testid="permission-preview">
-          <PermissionPreview toolResponse={request.toolResponse} />
+          <PermissionPreview toolResponse={request.toolResponse} pdfSplitApproval={pdfSplitApproval} />
         </div>
 
         <div className="mt-2 flex flex-col gap-1.5">
@@ -283,7 +328,7 @@ export default function PermissionRequestComposer({ request, onRespond, classNam
             index={1}
             label={t('agent.toolPermission.button.allow')}
             ariaLabel={t('agent.toolPermission.button.allow')}
-            disabled={isSubmitting}
+            disabled={isSubmitting || !pdfSplitApproval.canApprove}
             onSelect={() => void approve()}
           />
           <PermissionOption

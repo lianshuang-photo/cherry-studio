@@ -38,6 +38,13 @@ export interface FileProcessingJobPayload {
   processorId: FileProcessorId
 }
 
+/** Every durable job type emitted by {@link FileProcessingService.startJob}. */
+export const FILE_PROCESSING_JOB_TYPES = Object.freeze([
+  'file-processing.background',
+  'file-processing.background-local',
+  'file-processing.remote-poll'
+] as const)
+
 /**
  * Dispatch queue for a processor, one per processor so a slow one never blocks
  * the rest. Local and remote get separate namespaces on purpose: a queue's

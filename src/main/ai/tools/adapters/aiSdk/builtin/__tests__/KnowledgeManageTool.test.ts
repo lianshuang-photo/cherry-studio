@@ -4,6 +4,7 @@ import type { Assistant } from '@shared/data/types/assistant'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const addItems = vi.fn()
+const discardSplitConfirmation = vi.fn()
 const deleteConcepts = vi.fn()
 const refreshConcepts = vi.fn()
 const loggerWarn = vi.hoisted(() => vi.fn())
@@ -11,7 +12,7 @@ const loggerWarn = vi.hoisted(() => vi.fn())
 vi.mock('@application', () => ({
   application: {
     get: (name: string) => {
-      if (name === 'KnowledgeService') return { addItems, deleteConcepts, refreshConcepts }
+      if (name === 'KnowledgeService') return { addItems, deleteConcepts, discardSplitConfirmation, refreshConcepts }
       throw new Error(`unexpected service: ${name}`)
     }
   }
@@ -39,6 +40,7 @@ type ManageArgs = {
   url?: string
   content?: string
   title?: string
+  splitConfirmationToken?: string
   conceptIds?: string[]
 }
 
@@ -63,6 +65,7 @@ function callExecute(args: ManageArgs, ctx: { knowledgeBaseIds?: string[] } = {}
 describe('kb_manage', () => {
   beforeEach(() => {
     addItems.mockReset()
+    discardSplitConfirmation.mockReset()
     deleteConcepts.mockReset()
     refreshConcepts.mockReset()
     loggerWarn.mockReset()
@@ -102,6 +105,42 @@ describe('kb_manage', () => {
       { type: 'file', data: { source: 'report.pdf', path: '/Users/me/docs/report.pdf' } }
     ])
     expect(result).toEqual({ action: 'add', added: ['report.pdf'] })
+  })
+
+  it('confirms a prepared PDF split with the approval token', async () => {
+    const result = await callExecute(
+      {
+        baseId: 'kb-1',
+        action: 'add',
+        type: 'file',
+        path: '/Users/me/docs/report.pdf',
+        splitConfirmationToken: 'split-token'
+      },
+      { knowledgeBaseIds: ['kb-1'] }
+    )
+
+    expect(addItems).toHaveBeenCalledWith(
+      'kb-1',
+      [{ type: 'file', data: { source: 'report.pdf', path: '/Users/me/docs/report.pdf' } }],
+      undefined,
+      'split-token'
+    )
+    expect(result).toEqual({ action: 'add', added: ['report.pdf'] })
+  })
+
+  it('discards an unapproved split plan and steers the model to the UI', async () => {
+    addItems.mockResolvedValueOnce({
+      status: 'split_confirmation_required',
+      confirmation: { token: 'unapproved-token' }
+    })
+
+    const result = (await callExecute(
+      { baseId: 'kb-1', action: 'add', type: 'file', path: '/Users/me/docs/report.pdf' },
+      { knowledgeBaseIds: ['kb-1'] }
+    )) as { error: string }
+
+    expect(discardSplitConfirmation).toHaveBeenCalledWith('unapproved-token')
+    expect(result.error).toContain('knowledge data source UI')
   })
 
   it('rejects a non-absolute file path via schema validation and does not add', async () => {
