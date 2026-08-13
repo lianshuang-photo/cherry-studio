@@ -31,7 +31,7 @@ function makeModel(overrides: Partial<Model>): Model {
 
 describe('AGENT_RUNTIME_CAPABILITIES', () => {
   it('covers every agent runtime and keeps structural invariants explicit', () => {
-    expect(Object.keys(AGENT_RUNTIME_CAPABILITIES).sort()).toEqual(['claude-code', 'pi'])
+    expect(Object.keys(AGENT_RUNTIME_CAPABILITIES).sort()).toEqual(['claude-code', 'dsh', 'pi'])
 
     const transports = Object.values(AGENT_RUNTIME_CAPABILITIES).map((caps) => caps.transport)
     expect(new Set(transports).size).toBe(transports.length)
@@ -47,6 +47,9 @@ describe('AGENT_RUNTIME_CAPABILITIES', () => {
     expect(AGENT_RUNTIME_CAPABILITIES.pi.createDefaults.permissionMode).toBe('acceptEdits')
     expect(AGENT_RUNTIME_CAPABILITIES.pi.knowledgeBases).toBe(true)
     expect(AGENT_RUNTIME_CAPABILITIES.pi.mcp).toBe(true)
+    expect(AGENT_RUNTIME_CAPABILITIES.dsh.permissionModes).not.toContain('plan')
+    expect(AGENT_RUNTIME_CAPABILITIES.dsh.createDefaults.permissionMode).toBe('acceptEdits')
+    expect(AGENT_RUNTIME_CAPABILITIES.dsh.transport).toBe('dsh-agent')
   })
 
   describe('isModelCompatible — managed CherryAI default model', () => {

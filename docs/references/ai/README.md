@@ -14,6 +14,8 @@ plus the renderer-side transport that connects to them.
 | [Stream Manager](./stream-manager.md) | Active-stream registry, listeners, reconnect, abort, abort-and-restart steering, persistence backends |
 | [Agent Session Runtime](./agent-session-runtime.md) | Agent-session host/driver split, `pendingTurns` follow-up queue, resume token persistence, Claude Code driver fallback |
 | [Adding an Agent Runtime](./adding-a-runtime.md) | Operational checklist for a new runtime: capability descriptor, driver package, registration points, design rules |
+| [DeepSeek Harness 运行时](./dsh-runtime.zh.md) | 第三个智能体会话运行时 `dsh`：官方 SDK 子进程、本机启动与第一版边界 |
+| [DeepSeek Harness 集成方案](./dsh-integration.zh.md) | 对照 Pi / 官方 SDK 的落地过程：能力描述、事件对照、凭据隔离、验收清单 |
 | [Adapter Family](./adapter-family.md) | How `provider.endpointConfigs[ep].adapterFamily` picks the right `@ai-sdk/*` package per request |
 
 ### Subsystems

@@ -107,6 +107,7 @@ describe('BasicInfoStep', () => {
       screen.getByRole('option', { name: 'library.config.agent.field.runtime.option.claude_code' })
     ).toBeInTheDocument()
     expect(screen.getByRole('option', { name: 'library.config.agent.field.runtime.option.pi' })).toBeInTheDocument()
+    expect(screen.getByRole('option', { name: 'library.config.agent.field.runtime.option.dsh' })).toBeInTheDocument()
     expect(screen.queryByText('library.config.agent.field.runtime.pi_hint')).not.toBeInTheDocument()
     expect(screen.getByLabelText('library.config.agent.field.permission_mode.label')).toHaveTextContent(
       'agent.settings.tooling.permissionMode.default.title'
@@ -125,6 +126,19 @@ describe('BasicInfoStep', () => {
     )
     expect(screen.getByLabelText('library.config.agent.field.permission_mode.label')).toHaveTextContent(
       'agent.settings.tooling.permissionMode.acceptEdits.title'
+    )
+    expect(screen.getByTestId('permission-mode')).toHaveTextContent('acceptEdits')
+  })
+
+  it('shows the DeepSeek Harness selected label without crashing', async () => {
+    const user = userEvent.setup()
+    render(<Harness runtimeSelectable />)
+
+    await user.click(screen.getByLabelText('library.config.agent.field.runtime.label'))
+    await user.click(screen.getByRole('option', { name: 'library.config.agent.field.runtime.option.dsh' }))
+
+    expect(screen.getByLabelText('library.config.agent.field.runtime.label')).toHaveTextContent(
+      'library.config.agent.field.runtime.selected.dsh'
     )
     expect(screen.getByTestId('permission-mode')).toHaveTextContent('acceptEdits')
   })
