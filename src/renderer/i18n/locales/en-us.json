@@ -1116,6 +1116,22 @@
         "write": {
           "description": "Write files",
           "label": "Write files"
+        },
+        "str_replace_editor": {
+          "description": "Edit files with view, create, and replace",
+          "label": "String replace editor"
+        },
+        "todo_write": {
+          "description": "Creates and manages structured task lists",
+          "label": "Todo list"
+        },
+        "subagent": {
+          "description": "Delegates work to a child agent",
+          "label": "Subagent"
+        },
+        "skill": {
+          "description": "Loads a named skill's instructions",
+          "label": "Skill"
         }
       }
     },
@@ -3493,10 +3509,12 @@
             "label": "Runtime mode",
             "option": {
               "claude_code": "Advanced: Claude Agent",
+              "dsh": "DeepSeek Harness",
               "pi": "Fast: Pi"
             },
             "selected": {
               "claude_code": "Advanced",
+              "dsh": "Harness",
               "pi": "Fast"
             }
           },

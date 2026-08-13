@@ -1,3 +1,5 @@
+import path from 'node:path'
+
 import { application } from '@application'
 import { agentService } from '@data/services/AgentService'
 import { agentSessionMessageService } from '@data/services/AgentSessionMessageService'
@@ -103,6 +105,19 @@ function knowledgeScopeEquals(left: readonly string[], right: readonly string[])
   if (left.length !== right.length) return false
   const rightIds = new Set(right)
   return left.every((id) => rightIds.has(id))
+}
+
+function connectionWorkspaceIdentity(session: ReturnType<typeof agentSessionService.getById> | undefined): {
+  workspaceId: string
+  workspacePath: string
+} {
+  if (!session?.workspaceId || !session.workspace?.path) return { workspaceId: '', workspacePath: '' }
+  return {
+    workspaceId: session.workspaceId,
+    // AgentWorkspaceService already normalizes persisted paths. Resolve again here because the
+    // connection target is also used as a TOCTOU receipt for callers that replace the session row.
+    workspacePath: path.resolve(session.workspace.path)
+  }
 }
 
 export type AgentSessionRuntimeStatus = 'active' | 'idle'
@@ -1305,6 +1320,7 @@ export class AgentSessionRuntimeService extends BaseService {
    * next turn that does not repeat it.
    */
   private connectionTarget(entry: AgentSessionRuntimeEntry): AgentSessionConnectionTarget {
+    const workspace = connectionWorkspaceIdentity(agentSessionService.getById(entry.sessionId))
     const turn =
       this.currentTurn(entry) ??
       (entry.runtimeState.execution.kind === 'autonomous-turn' ? entry.runtimeState.execution.contextTurn : undefined)
@@ -1318,9 +1334,10 @@ export class AgentSessionRuntimeService extends BaseService {
           modelId: turn.modelId,
           reasoningEffort: turn.reasoningEffort,
           knowledgeBaseIds: turn.knowledgeBaseIds,
-          fastMode: turn.fastMode
+          fastMode: turn.fastMode,
+          ...workspace
         }
-      : { modelId: entry.modelId, reasoningEffort: 'default', knowledgeBaseIds: [], fastMode: false }
+      : { modelId: entry.modelId, reasoningEffort: 'default', knowledgeBaseIds: [], fastMode: false, ...workspace }
   }
 
   private connectionTargetEquals(entry: AgentSessionRuntimeEntry, target: AgentSessionConnectionTarget): boolean {
@@ -1330,6 +1347,8 @@ export class AgentSessionRuntimeService extends BaseService {
       current.modelId === target.modelId &&
       current.reasoningEffort === target.reasoningEffort &&
       current.fastMode === target.fastMode &&
+      current.workspaceId === target.workspaceId &&
+      current.workspacePath === target.workspacePath &&
       knowledgeScopeEquals(
         resolveKnowledgeBaseScope(configuredKnowledgeBaseIds, current.knowledgeBaseIds),
         resolveKnowledgeBaseScope(configuredKnowledgeBaseIds, target.knowledgeBaseIds)

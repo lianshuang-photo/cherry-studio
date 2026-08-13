@@ -250,6 +250,12 @@ describe('AgentSessionRuntimeService', () => {
     mocks.findCrashOrphanedAssistantMessages.mockReturnValue([])
     mocks.resolveCrashOrphanedMessages.mockReturnValue(undefined)
     mocks.ensureTraceId.mockReturnValue('b'.repeat(32))
+    mocks.getSessionById.mockReturnValue({
+      id: 'session-1',
+      agentId: 'agent-1',
+      workspaceId: 'workspace-1',
+      workspace: { id: 'workspace-1', path: '/workspace/one' }
+    })
     mocks.recordUsage.mockReturnValue(undefined)
     mocks.closeWarmQueries.mockResolvedValue(undefined)
     // A live agent with a model — the drain re-reads this to bail on a deleted model. Tests exercising
@@ -1442,7 +1448,9 @@ describe('AgentSessionRuntimeService', () => {
       modelId: switchedModelId,
       reasoningEffort: 'default',
       knowledgeBaseIds: [],
-      fastMode: false
+      fastMode: false,
+      workspaceId: 'workspace-1',
+      workspacePath: '/workspace/one'
     })
 
     await reader.cancel().catch(() => undefined)
@@ -1612,7 +1620,9 @@ describe('AgentSessionRuntimeService', () => {
       modelId: baseTurnInput.modelId,
       reasoningEffort: 'default',
       knowledgeBaseIds: [],
-      fastMode: false
+      fastMode: false,
+      workspaceId: 'workspace-1',
+      workspacePath: '/workspace/one'
     })
     expect(connection.close).not.toHaveBeenCalled()
   })
@@ -1883,7 +1893,9 @@ describe('AgentSessionRuntimeService', () => {
         modelId: baseTurnInput.modelId,
         reasoningEffort: 'default',
         knowledgeBaseIds: [],
-        fastMode: false
+        fastMode: false,
+        workspaceId: 'workspace-1',
+        workspacePath: '/workspace/one'
       })
       expect(firstConnection.close).toHaveBeenCalledOnce()
       expect(connect).toHaveBeenCalledTimes(1)
@@ -1936,7 +1948,9 @@ describe('AgentSessionRuntimeService', () => {
           modelId: switchedModelId,
           reasoningEffort: 'default',
           knowledgeBaseIds: [],
-          fastMode: false
+          fastMode: false,
+          workspaceId: 'workspace-1',
+          workspacePath: '/workspace/one'
         })
       )
 
@@ -3240,6 +3254,60 @@ describe('AgentSessionRuntimeService', () => {
   })
 
   describe('primeConnection — eager command load on session open', () => {
+    it('discards an in-flight prime when the session workspace changes and reconnects to the new target', async () => {
+      const firstConnection = {
+        events: createAsyncQueue<any>().iterable,
+        send: vi.fn(),
+        close: vi.fn(),
+        reconcile: vi.fn().mockResolvedValue('current')
+      }
+      const secondConnection = {
+        events: createAsyncQueue<any>().iterable,
+        send: vi.fn(),
+        close: vi.fn(),
+        reconcile: vi.fn().mockResolvedValue('current')
+      }
+      const firstConnect = createDeferred<any>()
+      const connect = vi.fn().mockReturnValueOnce(firstConnect.promise).mockResolvedValueOnce(secondConnection)
+      runtimeDriverRegistry.register({
+        type: 'test-runtime',
+        capabilities: ['agent-session'],
+        connect,
+        validateSession: vi.fn(),
+        listAvailableTools: vi.fn().mockResolvedValue([])
+      })
+      mocks.getAgent.mockReturnValue({ id: 'agent-1', type: 'test-runtime', model: baseTurnInput.modelId })
+      mocks.getSessionById.mockReturnValue({
+        id: 'session-1',
+        agentId: 'agent-1',
+        workspaceId: 'workspace-a',
+        workspace: { id: 'workspace-a', path: '/workspace/a' }
+      })
+
+      const service = new AgentSessionRuntimeService()
+      const primeA = service.primeConnection('session-1')
+      await vi.waitFor(() => expect(connect).toHaveBeenCalledTimes(1))
+
+      mocks.getSessionById.mockReturnValue({
+        id: 'session-1',
+        agentId: 'agent-1',
+        workspaceId: 'workspace-b',
+        workspace: { id: 'workspace-b', path: '/workspace/b/../b/' }
+      })
+      await service.primeConnection('session-1')
+      firstConnect.resolve(firstConnection)
+
+      await primeA
+      await vi.waitFor(() => expect(connect).toHaveBeenCalledTimes(2))
+      expect(firstConnection.close).toHaveBeenCalledOnce()
+      expect(secondConnection.close).not.toHaveBeenCalled()
+      expect(getEntry(service).connection).toBe(secondConnection)
+      expect((service as any).connectionTarget(getEntry(service))).toMatchObject({
+        workspaceId: 'workspace-b',
+        workspacePath: '/workspace/b'
+      })
+    })
+
     it('opens the connection without a turn and caches the slash-command catalog', async () => {
       const commands = [{ name: 'clear', description: 'Clear conversation' }]
       const events = createAsyncQueue<any>()

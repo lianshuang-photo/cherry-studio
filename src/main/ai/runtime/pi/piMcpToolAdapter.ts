@@ -1,10 +1,9 @@
 import { createHash } from 'node:crypto'
 
-import { application } from '@application'
-import { mcpServerService } from '@data/services/McpServerService'
 import type { ToolDefinition } from '@earendil-works/pi-coding-agent'
 import { loggerService } from '@logger'
 import type { AgentMcpServer } from '@main/ai/runtime/agentMcpServers'
+import { warmMcpToolCatalogs } from '@main/ai/runtime/mcpToolCatalog'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
 import type { CallToolResult, ContentBlock, Tool } from '@modelcontextprotocol/sdk/types.js'
@@ -32,19 +31,7 @@ export function buildPiMcpToolName(serverName: string, toolName: string): string
 }
 
 /** Warm user-configured MCP catalogs before their in-process bridge takes its initial tool snapshot. */
-export async function warmMcpToolCatalogs(mcpIds: readonly string[]): Promise<void> {
-  const catalog = application.get('McpCatalogService')
-  const serverIds = new Set<string>()
-  for (const idOrName of mcpIds) {
-    const server = mcpServerService.findByIdOrName(idOrName)
-    if (!server) {
-      logger.warn('Skipping unresolvable MCP server referenced by agent', { idOrName })
-      continue
-    }
-    serverIds.add(server.id)
-  }
-  await Promise.allSettled([...serverIds].map((serverId) => catalog.refreshTools(serverId)))
-}
+export { warmMcpToolCatalogs }
 
 /** Adapt every MCP server assembled for the session into Pi custom tools over an in-memory transport. */
 export async function buildMcpToolDefinitions(servers: Record<string, AgentMcpServer>): Promise<PiMcpToolBridge> {

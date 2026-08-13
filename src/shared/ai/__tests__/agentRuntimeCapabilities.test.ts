@@ -4,6 +4,7 @@ import type { Provider } from '@shared/data/types/provider'
 import { describe, expect, it } from 'vitest'
 
 import { AGENT_RUNTIME_CAPABILITIES } from '../agentRuntimeCapabilities'
+import { DSH_BUILTIN_TOOLS } from '../dshBuiltinTools'
 
 function makeProvider(overrides: Partial<Provider>): Provider {
   return {
@@ -31,7 +32,7 @@ function makeModel(overrides: Partial<Model>): Model {
 
 describe('AGENT_RUNTIME_CAPABILITIES', () => {
   it('covers every agent runtime and keeps structural invariants explicit', () => {
-    expect(Object.keys(AGENT_RUNTIME_CAPABILITIES).sort()).toEqual(['claude-code', 'pi'])
+    expect(Object.keys(AGENT_RUNTIME_CAPABILITIES).sort()).toEqual(['claude-code', 'dsh', 'pi'])
 
     const transports = Object.values(AGENT_RUNTIME_CAPABILITIES).map((caps) => caps.transport)
     expect(new Set(transports).size).toBe(transports.length)
@@ -47,6 +48,36 @@ describe('AGENT_RUNTIME_CAPABILITIES', () => {
     expect(AGENT_RUNTIME_CAPABILITIES.pi.createDefaults.permissionMode).toBe('acceptEdits')
     expect(AGENT_RUNTIME_CAPABILITIES.pi.knowledgeBases).toBe(true)
     expect(AGENT_RUNTIME_CAPABILITIES.pi.mcp).toBe(true)
+    expect(AGENT_RUNTIME_CAPABILITIES.dsh.permissionModes).toEqual([
+      'default',
+      'acceptEdits',
+      'plan',
+      'bypassPermissions'
+    ])
+    expect(AGENT_RUNTIME_CAPABILITIES.dsh.permissionModes).not.toContain('auto')
+    expect(AGENT_RUNTIME_CAPABILITIES.dsh.createDefaults.permissionMode).toBe('default')
+    expect(AGENT_RUNTIME_CAPABILITIES.dsh.heartbeat).toBe(false)
+    expect(AGENT_RUNTIME_CAPABILITIES.dsh.knowledgeBases).toBe(true)
+    expect(AGENT_RUNTIME_CAPABILITIES.dsh.mcp).toBe(true)
+    expect(AGENT_RUNTIME_CAPABILITIES.dsh.skills).toBe(true)
+    expect(AGENT_RUNTIME_CAPABILITIES.dsh.modelTiers).toBe(false)
+    expect(AGENT_RUNTIME_CAPABILITIES.dsh.slashCommands).toEqual([])
+    expect(AGENT_RUNTIME_CAPABILITIES.dsh.transport).toBe('dsh-agent')
+  })
+
+  it('surfaces the DSH rc.6 built-in tools with conservative catalog approvals', () => {
+    expect(DSH_BUILTIN_TOOLS).toEqual([
+      { name: 'bash', category: 'shell', approval: 'prompt' },
+      { name: 'read', category: 'file', approval: 'auto' },
+      { name: 'read_image', category: 'media', approval: 'auto' },
+      { name: 'write', category: 'file', approval: 'prompt' },
+      { name: 'edit', category: 'file', approval: 'prompt' },
+      { name: 'todo_write', category: 'orchestration', approval: 'auto' },
+      { name: 'subagent', category: 'orchestration', approval: 'prompt' },
+      { name: 'ask_user_question', category: 'orchestration', approval: 'auto' },
+      { name: 'exit_plan_mode', category: 'orchestration', approval: 'auto' },
+      { name: 'skill', category: 'context', approval: 'auto' }
+    ])
   })
 
   describe('isModelCompatible — managed CherryAI default model', () => {

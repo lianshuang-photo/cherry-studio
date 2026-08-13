@@ -1116,6 +1116,22 @@
         "write": {
           "description": "写入文件",
           "label": "写入文件"
+        },
+        "str_replace_editor": {
+          "description": "查看、创建和替换文件内容",
+          "label": "字符串替换编辑器"
+        },
+        "todo_write": {
+          "description": "创建和管理结构化待办",
+          "label": "待办列表"
+        },
+        "subagent": {
+          "description": "把工作委派给子智能体",
+          "label": "子智能体"
+        },
+        "skill": {
+          "description": "加载指定技能的完整说明",
+          "label": "技能"
         }
       }
     },
@@ -3493,10 +3509,12 @@
             "label": "运行模式",
             "option": {
               "claude_code": "增强：Claude Agent",
+              "dsh": "DeepSeek Harness",
               "pi": "快速：Pi"
             },
             "selected": {
               "claude_code": "增强",
+              "dsh": "Harness",
               "pi": "快速"
             }
           },

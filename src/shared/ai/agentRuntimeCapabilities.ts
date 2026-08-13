@@ -1,4 +1,6 @@
 import { claudeUserFacingTools } from '@shared/ai/claudecode/toolRegistry'
+import { DSH_BUILTIN_TOOLS } from '@shared/ai/dshBuiltinTools'
+import { isDshCompatibleModel } from '@shared/ai/dshModelCompatibility'
 import { PI_BUILTIN_TOOLS } from '@shared/ai/piBuiltinTools'
 import { isPiCompatibleModel } from '@shared/ai/piModelCompatibility'
 import type { AgentPermissionMode } from '@shared/data/api/schemas/agents'
@@ -67,6 +69,15 @@ const PI_BUILTIN_COMMANDS = [
   { command: '/compact', description: 'Compact conversation with optional focus instructions' }
 ] as const satisfies readonly SlashCommand[]
 
+const DSH_BUILTIN_COMMANDS = [] as const satisfies readonly SlashCommand[]
+
+const DSH_PERMISSION_MODES = [
+  'default',
+  'acceptEdits',
+  'plan',
+  'bypassPermissions'
+] as const satisfies readonly AgentPermissionMode[]
+
 export const AGENT_RUNTIME_CAPABILITIES = {
   'claude-code': {
     labelKey: 'library.config.agent.field.runtime.option.claude_code',
@@ -118,6 +129,31 @@ export const AGENT_RUNTIME_CAPABILITIES = {
     transport: 'pi-agent',
     builtinTools: () =>
       PI_BUILTIN_TOOLS.map((tool) => ({
+        id: tool.name,
+        labelKey: `agent.tools.builtin.${tool.name}.label`,
+        descriptionKey: `agent.tools.builtin.${tool.name}.description`,
+        category: tool.category
+      }))
+  },
+  dsh: {
+    labelKey: 'library.config.agent.field.runtime.option.dsh',
+    labelFallback: 'DeepSeek Harness',
+    // DSH has no model-side equivalent to Claude's `auto` classifier.
+    permissionModes: DSH_PERMISSION_MODES,
+    modelTiers: false,
+    heartbeat: false,
+    knowledgeBases: true,
+    mcp: true,
+    skills: true,
+    claudeRegistryTools: false,
+    slashCommands: DSH_BUILTIN_COMMANDS,
+    createDefaults: { permissionMode: 'default' },
+    // Official adapter needs a provider endpoint (or the DeepSeek catalog).
+    // No provider ⇒ not drivable. CherryAI free-quota default is barred.
+    isModelCompatible: (provider, model) => isDshCompatibleModel(provider, model),
+    transport: 'dsh-agent',
+    builtinTools: () =>
+      DSH_BUILTIN_TOOLS.map((tool) => ({
         id: tool.name,
         labelKey: `agent.tools.builtin.${tool.name}.label`,
         descriptionKey: `agent.tools.builtin.${tool.name}.description`,

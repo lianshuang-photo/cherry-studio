@@ -107,6 +107,7 @@ describe('BasicInfoStep', () => {
       screen.getByRole('option', { name: 'library.config.agent.field.runtime.option.claude_code' })
     ).toBeInTheDocument()
     expect(screen.getByRole('option', { name: 'library.config.agent.field.runtime.option.pi' })).toBeInTheDocument()
+    expect(screen.getByRole('option', { name: 'library.config.agent.field.runtime.option.dsh' })).toBeInTheDocument()
     expect(screen.queryByText('library.config.agent.field.runtime.pi_hint')).not.toBeInTheDocument()
     expect(screen.getByLabelText('library.config.agent.field.permission_mode.label')).toHaveTextContent(
       'agent.settings.tooling.permissionMode.default.title'
@@ -127,6 +128,22 @@ describe('BasicInfoStep', () => {
       'agent.settings.tooling.permissionMode.acceptEdits.title'
     )
     expect(screen.getByTestId('permission-mode')).toHaveTextContent('acceptEdits')
+  })
+
+  it('switches to the DeepSeek Harness permission default', async () => {
+    const user = userEvent.setup()
+    render(<Harness runtimeSelectable />)
+
+    await user.click(screen.getByLabelText('library.config.agent.field.runtime.label'))
+    await user.click(screen.getByRole('option', { name: 'library.config.agent.field.runtime.option.dsh' }))
+
+    expect(screen.getByLabelText('library.config.agent.field.runtime.label')).toHaveTextContent(
+      'library.config.agent.field.runtime.selected.dsh'
+    )
+    expect(screen.getByLabelText('library.config.agent.field.permission_mode.label')).toHaveTextContent(
+      'agent.settings.tooling.permissionMode.default.title'
+    )
+    expect(screen.getByTestId('permission-mode')).toHaveTextContent('default')
   })
 
   it('clears the missing-model warning when a prefilled model resolves asynchronously', async () => {

@@ -23,6 +23,10 @@ export interface AgentSessionRuntimeConnectionTarget {
   modelId: string
   reasoningEffort: string
   knowledgeBaseIds: readonly string[]
+  /** Stable session workspace identity captured with the connection target. */
+  workspaceId: string
+  /** Canonical workspace path; guards workspace-row replacement as well as id changes. */
+  workspacePath: string
 }
 
 /**

@@ -39,16 +39,16 @@ const AGENT_RUNTIME_OPTIONS: { value: AgentType; labelKey: string; labelFallback
   AGENT_RUNTIME_CAPABILITIES
 ).map(([value, caps]) => ({ value: value as AgentType, labelKey: caps.labelKey, labelFallback: caps.labelFallback }))
 
-const AGENT_RUNTIME_SELECTED_LABELS: Record<AgentType, { labelKey: string; labelFallback: string }> = {
-  'claude-code': {
-    labelKey: 'library.config.agent.field.runtime.selected.claude_code',
-    labelFallback: 'Advanced'
-  },
-  pi: {
-    labelKey: 'library.config.agent.field.runtime.selected.pi',
-    labelFallback: 'Fast'
-  }
-}
+const selectedRuntimeLabelKey = (type: AgentType) =>
+  `library.config.agent.field.runtime.selected.${type.replaceAll('-', '_')}`
+
+const AGENT_RUNTIME_SELECTED_LABELS: Record<AgentType, { labelKey: string; labelFallback: string }> =
+  Object.fromEntries(
+    AGENT_RUNTIME_OPTIONS.map((option) => [
+      option.value,
+      { labelKey: selectedRuntimeLabelKey(option.value), labelFallback: option.labelFallback }
+    ])
+  ) as Record<AgentType, { labelKey: string; labelFallback: string }>
 
 type ModelFieldProps = {
   form: UseFormReturn<ResourceCreateWizardFormValues>
@@ -113,8 +113,12 @@ function AgentRuntimeModelFields({
                   aria-label={t('library.config.agent.field.runtime.label')}>
                   <SelectValue>
                     {t(
-                      AGENT_RUNTIME_SELECTED_LABELS[field.value].labelKey,
-                      AGENT_RUNTIME_SELECTED_LABELS[field.value].labelFallback
+                      AGENT_RUNTIME_SELECTED_LABELS[field.value]?.labelKey ??
+                        AGENT_RUNTIME_CAPABILITIES[field.value]?.labelKey ??
+                        '',
+                      AGENT_RUNTIME_SELECTED_LABELS[field.value]?.labelFallback ??
+                        AGENT_RUNTIME_CAPABILITIES[field.value]?.labelFallback ??
+                        field.value
                     )}
                   </SelectValue>
                 </SelectTrigger>
