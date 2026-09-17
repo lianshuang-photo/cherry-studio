@@ -1,3 +1,4 @@
+import { CreateAgentCommandSchema } from '@shared/ipc/schemas/ai'
 import { describe, expect, it } from 'vitest'
 
 import { AgentConfigurationSchema, AgentEntitySchema, ListAgentsQuerySchema, UpdateAgentSchema } from '../agents'
@@ -70,5 +71,47 @@ describe('AgentEntitySchema', () => {
       { skillId: 'skill-a', isEnabled: false },
       { skillId: 'skill-b', isEnabled: true }
     ])
+  })
+})
+
+describe('Agent environment variables at save boundaries', () => {
+  const createBase = { type: 'claude-code', name: 'Agent', model: 'openai::gpt-4' }
+
+  describe.each([
+    ['configuration', (configuration: unknown) => AgentConfigurationSchema.safeParse(configuration)],
+    ['create', (configuration: unknown) => CreateAgentCommandSchema.safeParse({ ...createBase, configuration })],
+    ['update', (configuration: unknown) => UpdateAgentSchema.safeParse({ configuration })]
+  ] as const)('%s', (_name, parse) => {
+    it.each([
+      { 'BAD\u0000NAME': 'private-value' },
+      { TOKEN: 'private\u0000value' },
+      { TOKEN: 'private-value\u0000' },
+      { TOKEN: '\u0000private-value' }
+    ])('rejects null bytes without exposing values: %j', (envVars) => {
+      const result = parse({ env_vars: envVars })
+      expect(result.success).toBe(false)
+      if (result.success) throw new Error('Expected invalid environment variables to be rejected')
+      expect(result.error.message).toContain('Environment variable names and values must not contain null bytes')
+      expect(result.error.message).not.toContain('private')
+    })
+
+    it.each([
+      {},
+      { env_vars: undefined },
+      { env_vars: {} },
+      { env_vars: { TOKEN: 'normal', EMPTY: '', UNICODE: '中文', MULTILINE: 'a\nb', EQUALS: 'a=b' } },
+      { env_vars: { TOKEN: 'normal' }, future_setting: { enabled: true } }
+    ])('preserves valid configuration: %j', (configuration) => {
+      const result = parse(configuration)
+      expect(result.success).toBe(true)
+      if (!result.success) throw result.error
+      const data = _name === 'configuration' ? result.data : result.data.configuration
+      expect(data).toEqual(configuration)
+    })
+  })
+
+  it('keeps configuration optional on create and update', () => {
+    expect(CreateAgentCommandSchema.safeParse(createBase).success).toBe(true)
+    expect(UpdateAgentSchema.parse({})).toEqual({})
   })
 })

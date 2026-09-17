@@ -47,7 +47,14 @@ export const AgentConfigurationSchema = z
     permission_mode: AgentPermissionModeSchema.optional(),
     reasoning_effort: ReasoningEffortOptionSchema.optional(),
     max_turns: z.number().optional(),
-    env_vars: z.record(z.string(), z.string()).optional(),
+    env_vars: z
+      .record(z.string(), z.string())
+      .refine(
+        (envVars) =>
+          Object.entries(envVars).every(([name, value]) => !name.includes('\u0000') && !value.includes('\u0000')),
+        'Environment variable names and values must not contain null bytes (U+0000)'
+      )
+      .optional(),
     bootstrap_completed: z.boolean().optional(),
     scheduler_enabled: z.boolean().optional(),
     scheduler_type: AgentSchedulerTypeSchema.optional(),
